@@ -69,7 +69,7 @@ PATCH_VERSION=$VERSION
 log "Version components: Major=$MAJOR_VERSION, Minor=$MINOR_VERSION, Patch=$PATCH_VERSION"
 
 # Set image name base
-DOCKER_IMAGE=${DOCKER_IMAGE:-"evandarwin/phpbb"}
+DOCKER_IMAGE=${DOCKER_IMAGE:-"basbe/phpbb"}
 
 # Build the Docker image with PHP 8.4
 log "==> Building phpBB Docker image"
@@ -81,21 +81,25 @@ log "  image name      :: $DOCKER_IMAGE:$VERSION"
 # Set build args
 BUILD_ARGS="--build-arg PHPBB_VERSION=$VERSION --build-arg PHP_VERSION=84 --build-arg ALPINE_VERSION=edge"
 
+# Enable buildx
+docker buildx create --use
+docker buildx inspect --bootstrap
+
 # Build the Docker image
-docker build \
+docker buildx build --platform linux/amd64,linux/arm64 \
   $BUILD_ARGS \
   -t "$DOCKER_IMAGE:$VERSION" \
-  .
+  . --push
 
 # Create additional version tags
-docker tag "$DOCKER_IMAGE:$VERSION" "$DOCKER_IMAGE:$MINOR_VERSION"
-log "Tagged $VERSION as $MINOR_VERSION"
+# docker tag "$DOCKER_IMAGE:$VERSION" "$DOCKER_IMAGE:$MINOR_VERSION"
+# log "Tagged $VERSION as $MINOR_VERSION"
 
-docker tag "$DOCKER_IMAGE:$VERSION" "$DOCKER_IMAGE:$MAJOR_VERSION"
-log "Tagged $VERSION as $MAJOR_VERSION"
+# docker tag "$DOCKER_IMAGE:$VERSION" "$DOCKER_IMAGE:$MAJOR_VERSION"
+# log "Tagged $VERSION as $MAJOR_VERSION"
 
-docker tag "$DOCKER_IMAGE:$VERSION" "$DOCKER_IMAGE:latest"
-log "Tagged $VERSION as latest"
+# docker tag "$DOCKER_IMAGE:$VERSION" "$DOCKER_IMAGE:latest"
+# log "Tagged $VERSION as latest"
 
 log "==> Build complete!"
 

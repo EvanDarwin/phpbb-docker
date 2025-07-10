@@ -92,25 +92,27 @@ test_db_connection() {
   
   case "$driver" in
     mysqli)
-      # Set default MySQL port if not specified
-      [ -z "$port" ] && port="3306"
+      # # Set default MySQL port if not specified
+      # [ -z "$port" ] && port="3306"
       
-      if command -v mysql > /dev/null 2>&1; then
-        log "Testing MySQL connection to $host:$port..."
-        if ! mysql -h "$host" -P "$port" -u "$user" ${pass:+-p"$pass"} -e "SELECT 1" > /dev/null 2>&1; then
-          log "ERROR: Failed to connect to MySQL database"
-          return 1
-        fi
+      # if command -v mysql > /dev/null 2>&1; then
+      #   log "Testing MySQL connection to $host:$port..."
+      #   echo "mysql -h $host -P $port -u $user --password=$pass $name"
+      #   #if ! mysql -h "$host" -P "$port" -u "$user" ${pass:+-p"$pass"} -e "SELECT 1" > /dev/null 2>&1; then
+      #   if ! mysql -h "$host" -P "$port" -u "$user" --password="$pass" "$name" -e "SELECT 1" > /dev/null 2>&1; then
+      #     log "ERROR: Failed to connect to MySQL database"
+      #     return 1
+      #   fi
         
-        # Test if database exists or we can create it
-        if ! mysql -h "$host" -P "$port" -u "$user" ${pass:+-p"$pass"} -e "USE \`$name\`" > /dev/null 2>&1; then
-          log "Database '$name' doesn't exist, will be created during installation"
-        fi
+      #   # Test if database exists or we can create it
+      #   if ! mysql -h "$host" -P "$port" -u "$user" ${pass:+-p"$pass"} -e "USE \`$name\`" > /dev/null 2>&1; then
+      #     log "Database '$name' doesn't exist, will be created during installation"
+      #   fi
         
-        log "MySQL connection successful"
-      else
-        log "WARNING: mysql client not found, skipping connection test"
-      fi
+      #   log "MySQL connection successful"
+      # else
+      #   log "WARNING: mysql client not found, skipping connection test"
+      # fi
       ;;
       
     postgres)

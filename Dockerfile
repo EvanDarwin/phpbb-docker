@@ -124,6 +124,9 @@ RUN sed -i "s/user = nobody/user = phpbb/g" /etc/php${PHP_VERSION}/php-fpm.d/www
 COPY scripts/install-phpbb.sh scripts/docker-entrypoint.sh scripts/install-from-yml.sh /opt/.docker/
 COPY config/nginx.conf /etc/nginx/http.d/default.conf
 
+# Copy phpbb artefact fixed version
+COPY artefacts/phpbb.zip /tmp/phpbb.zip
+
 # Download and install phpBB during the build
 RUN if [ -z "${PHPBB_VERSION}" ]; then \
     echo "ERROR: PHPBB_VERSION build argument is not set" && exit 1; \
@@ -135,10 +138,10 @@ RUN if [ -z "${PHPBB_VERSION}" ]; then \
     echo "ERROR: Could not extract major.minor version from ${PHPBB_VERSION}" && exit 1; \
     fi && \
     # Download and extract phpBB
-    DOWNLOAD_URL="https://download.phpbb.com/pub/release/${MAJOR_MINOR_VERSION}/${PHPBB_VERSION}/phpBB-${PHPBB_VERSION}.zip" && \
-    echo "Downloading from: ${DOWNLOAD_URL}" && \
+    # DOWNLOAD_URL="https://download.phpbb.com/pub/release/${MAJOR_MINOR_VERSION}/${PHPBB_VERSION}/phpBB-${PHPBB_VERSION}.zip" && \
+    # echo "Downloading from: ${DOWNLOAD_URL}" && \
     cd /tmp && \
-    curl -L -o phpbb.zip "${DOWNLOAD_URL}" && \
+    # curl -L -o phpbb.zip "${DOWNLOAD_URL}" && \
     unzip phpbb.zip && \
     rm phpbb.zip && \
     # Move files to destination and set up directories

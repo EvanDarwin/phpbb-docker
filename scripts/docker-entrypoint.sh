@@ -199,17 +199,17 @@ check_database_connectivity() {
       fi
       
       # Try connecting to MySQL with appropriate arguments
-      if command -v mysql >/dev/null 2>&1; then
-        log "Testing MySQL connection to $db_host..."
-        if ! mysql -h "$db_host" ${db_port:+-P "$db_port"} -u "$db_user" ${db_pass:+-p"$db_pass"} -e "SELECT 1" >/dev/null 2>&1; then
-          log "WARNING: Could not connect to MySQL server at $db_host. phpBB may not function correctly!"
-          result=0  # Don't fail the container, just warn
-        else
-          log "MySQL connectivity test successful"
-        fi
-      else
-        log "WARNING: MySQL client not available, skipping connectivity check"
-      fi
+      # if command -v mysql >/dev/null 2>&1; then
+      #   log "Testing MySQL connection to $db_host..."
+      #   if ! mysql -h "$db_host" ${db_port:+-P "$db_port"} -u "$db_user" ${db_pass:+-p"$db_pass"} -e "SELECT 1" >/dev/null 2>&1; then
+      #     log "WARNING: Could not connect to MySQL server at $db_host. phpBB may not function correctly!"
+      #     result=0  # Don't fail the container, just warn
+      #   else
+      #     log "MySQL connectivity test successful"
+      #   fi
+      # else
+      #   log "WARNING: MySQL client not available, skipping connectivity check"
+      # fi
       ;;
       
     postgres)
