@@ -100,7 +100,9 @@ persisted.
 
 ## Environment Variables
 
-The following environment variables can be used to configure the phpBB installation:
+The following environment variables can be used to configure the initial phpBB installation.
+Note that only the PHP configuration variables have any effect if you already have
+an existing `config.php` (with database connection information) and database from a previous installation.
 
 ### Forum Configuration
 
@@ -166,7 +168,7 @@ The following environment variables can be used to configure the phpBB installat
 
 There are two main approaches to persist your phpBB data:
 
-### 1. Simple Volume Mounting (Recommended)
+### 1. Simple Volume Mounting
 
 Mount a single volume to keep everything in one place:
 
@@ -182,24 +184,44 @@ docker run -d \
   evandarwin/phpbb:latest
 ```
 
-### 2. Granular Control with Multiple Volumes
+### 2. Granular Control with Multiple Volumes (Upgrade Path)
 
 For more control over specific data directories:
 
 ```bash
 docker run -d \
   -p 8080:8080 \
-  -v phpbb_config:/opt/phpbb/config \
-  -v phpbb_store:/opt/phpbb/store \
-  -v phpbb_files:/opt/phpbb/files \
-  -v phpbb_images:/opt/phpbb/images \
-  -v phpbb_ext:/opt/phpbb/ext \
+  -v ./config.php:/opt/phpbb/phpbb/config.php \
+  -v phpbb_store:/opt/phpbb/phpbb/store \
+  -v phpbb_files:/opt/phpbb/phpbb/files \
+  -v phpbb_images:/opt/phpbb/phpbb/images \
+  -v phpbb_ext:/opt/phpbb/phpbb/ext \
+  -v phpbb_style:/opt/phpbb/phpbb/styles \
   -e PHPBB_DATABASE_HOST="db" \
   -e PHPBB_DATABASE_NAME="phpbb" \
   -e PHPBB_DATABASE_USER="phpbb" \
   -e PHPBB_DATABASE_PASSWORD="secret" \
   evandarwin/phpbb:latest
 ```
+The `store`, `files` and `images` folders should be persisted; adding `ext` and `styles` folders gives you the option to install custom extensions and styles.
+
+
+The `config.php` needs to be a local file with initial write permissions for the first setup. The write permissions need to be for the phpbb user in the container, likely UID 100, GUID 101, see also [Issue #3](https://github.com/EvanDarwin/phpbb-docker/issues/3).
+Once the initial installation ran and setup created the database tables and `config.php`, the `config.php` can also be mounted read-only:
+```bash
+docker ... -v ./config.php:/opt/phpbb/phpbb/config.php:ro ...
+```
+
+If you have (a backup of) an existing installation with database and config.php, you can restore these folders and the database from there.
+
+
+## Upgrade path
+If you mount the full `/opt/phpbb` folder persistently (option 1 above), the docker container will not upgrade to new versions correctly (at least as of now).
+
+However, if you choose option 2 to mount only the `config.php` and folders `store`, `files` and `images` persistently, and optionally `ext` and `styles`,
+then upgrading the docker volume is equivalent to a [full upgrade](https://www.phpbb.com/support/docs/en/3.3/ug/upgradeguide/update_full/).
+
+In that case, upgrading the docker container will also perform the database migration automatically.
 
 ## Custom PHP Configuration
 
