@@ -121,7 +121,7 @@ RUN sed -i "s/user = nobody/user = phpbb/g" /etc/php${PHP_VERSION}/php-fpm.d/www
     chown phpbb:phpbb /run/nginx.pid
 
 # Copy scripts and configurations
-COPY scripts/install-phpbb.sh scripts/docker-entrypoint.sh scripts/install-from-yml.sh /opt/.docker/
+COPY scripts/install-phpbb.sh scripts/docker-entrypoint.sh scripts/install-from-yml.sh scripts/update-db-migration.sh /opt/.docker/
 COPY config/nginx.conf /etc/nginx/http.d/default.conf
 
 # Download and install phpBB during the build

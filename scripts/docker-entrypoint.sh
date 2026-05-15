@@ -88,10 +88,17 @@ configure_phpbb() {
     fi
   else
     log "phpBB already configured, skipping installation"
+
     
     # Even if installation was skipped, ensure the install directory is removed
     INSTALL_DIR="${PHPBB_ROOT:-/opt/phpbb}/phpbb/install"
     if [ -d "$INSTALL_DIR" ]; then
+      log "install directory found: might be a persistent DB with a new docker image and mounted subvolumes only -> update database migration"
+      if ! /opt/.docker/update-db-migration.sh; then
+        log "ERROR: Failed to update and run database migration."
+	return 1
+      fi
+      
       log "SECURITY: Removing phpBB install directory..."
       if rm -rf "$INSTALL_DIR"; then
         log "SECURITY: Successfully removed phpBB install directory"
