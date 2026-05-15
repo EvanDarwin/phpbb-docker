@@ -191,7 +191,7 @@ For more control over specific data directories:
 ```bash
 docker run -d \
   -p 8080:8080 \
-  -v ./config.php:/opt/phpbb/phpbb/config.php \
+  -v phpbb_config:/opt/phpbb/config \
   -v phpbb_store:/opt/phpbb/phpbb/store \
   -v phpbb_files:/opt/phpbb/phpbb/files \
   -v phpbb_images:/opt/phpbb/phpbb/images \
@@ -203,17 +203,17 @@ docker run -d \
   -e PHPBB_DATABASE_PASSWORD="secret" \
   evandarwin/phpbb:latest
 ```
+Here, the /opt/phpbb/config directory is used to persist the `config.php` file only, it is copied to/from there during container startup/installation.
 The `store`, `files` and `images` folders should be persisted; adding `ext` and `styles` folders gives you the option to install custom extensions and styles.
 
-
-The `config.php` needs to be a local file with initial write permissions for the first setup. The write permissions need to be for the phpbb user in the container, likely UID 100, GUID 101, see also [Issue #3](https://github.com/EvanDarwin/phpbb-docker/issues/3).
-Once the initial installation ran and setup created the database tables and `config.php`, the `config.php` can also be mounted read-only:
+The `config.php` needs to be a local file with initial write permissions for the first setup.
+The write permissions need to be for the phpbb user in the container, likely UID 100, GUID 101, see also [Issue #3](https://github.com/EvanDarwin/phpbb-docker/issues/3).
+Once the initial installation ran and setup created the database tables and `config.php`, the `config` folder can also be mounted read-only:
 ```bash
-docker ... -v ./config.php:/opt/phpbb/phpbb/config.php:ro ...
+docker ... -v phpbb_config:/opt/phpbb/config:ro ...
 ```
 
-If you have (a backup of) an existing installation with database and config.php, you can restore these folders and the database from there.
-
+If you have (a backup of) an existing installation with database and config.php, you can restore these folders and the database from the backup.
 
 ## Upgrade path
 If you mount the full `/opt/phpbb` folder persistently (option 1 above), the docker container will not upgrade to new versions correctly (at least as of now).
@@ -519,7 +519,7 @@ Kubernetes, or Docker Compose with health checks.
 2. **Permission Issues**:
 
    - If mounting volumes, ensure they have the correct ownership and permissions
-   - The container uses a non-root user with UID/GID different from the host
+   - The container uses a non-root user with UID/GID different from the host, by default 100/101.
 
 3. **PHP Configuration**:
 

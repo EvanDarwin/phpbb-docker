@@ -101,5 +101,5 @@ log "==> Build complete!"
 
 # Display success message
 log "==> All builds complete!"
-log "To run the container: docker run -p 80:80 $DOCKER_IMAGE:<tag>"
+log "To run the container: docker run -p 8080:8080 $DOCKER_IMAGE:<tag>"
 log "Available tags: $VERSION, $MINOR_VERSION, $MAJOR_VERSION, latest"

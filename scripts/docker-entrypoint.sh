@@ -1,6 +1,8 @@
 #!/bin/sh
 set -eu
 
+PHPBB_ROOT=$PHPBB_ROOT
+
 log() {
   echo "[$(hostname)] $1"
 }
@@ -35,7 +37,7 @@ validate_environment() {
   fi
   
   # Conditionally required variables
-  if [ ! -f "${PHPBB_ROOT:-/opt/phpbb}/phpbb/index.php" ] && [ -z "${PHPBB_VERSION:-}" ]; then
+  if [ ! -f "${PHPBB_ROOT}/phpbb/index.php" ] && [ -z "${PHPBB_VERSION:-}" ]; then
     log "ERROR: PHPBB_VERSION environment variable is required for initial installation"
     missing_vars=$((missing_vars + 1))
   fi
@@ -67,13 +69,13 @@ setup_php_version() {
 
 # Install phpBB if not already installed
 install_phpbb() {
-  if [ ! -f "${PHPBB_ROOT:-/opt/phpbb}/phpbb/index.php" ] || \
-     [ ! -f "${PHPBB_ROOT:-/opt/phpbb}/store/index.htm" ] || \
-     [ ! -f "${PHPBB_ROOT:-/opt/phpbb}/files/index.htm" ] || \
-     [ ! -f "${PHPBB_ROOT:-/opt/phpbb}/images/index.htm" ] || \
-     [ ! -f "${PHPBB_ROOT:-/opt/phpbb}/ext/index.htm" ] || \
-     [ ! -d "${PHPBB_ROOT:-/opt/phpbb}/styles/all/" ] ; then
-    log "phpBB files not found at ${PHPBB_ROOT:-/opt/phpbb}/phpbb, running install script..."
+  if [ ! -f "$PHPBB_ROOT/phpbb/index.php" ] || \
+     [ ! -f "$PHPBB_ROOT/phpbb/store/index.htm" ] || \
+     [ ! -f "$PHPBB_ROOT/phpbb/files/index.htm" ] || \
+     [ ! -f "$PHPBB_ROOT/phpbb/images/index.htm" ] || \
+     [ ! -f "$PHPBB_ROOT/phpbb/ext/index.htm" ] || \
+     [ ! -d "$PHPBB_ROOT/phpbb/styles/all/" ] ; then
+    log "phpBB files not found at $PHPBB_ROOT/phpbb, running install script..."
     if ! /opt/.docker/install-phpbb.sh "${PHPBB_VERSION}"; then
       log "ERROR: Failed to install phpBB. Exiting container."
       return 1
@@ -82,10 +84,34 @@ install_phpbb() {
   return 0
 }
 
+# allow to keep config.php in separate $PHPBB_ROOT/config folder
+# copying from there at startup and copying back in `install-from-yml.sh`
+copy_config_php() {
+  mkdir -p "$PHPBB_ROOT/phpbb"
+  if [ -f "$PHPBB_ROOT/config/config.php" ] ; then
+    log "copy $PHPBB_ROOT/config/config.php to phpbb installation"
+    # Double-check config/config.php permissions
+    chmod 640 "$PHPBB_ROOT/config/config.php" || {
+      log "ERROR: Failed to set $PHPBB_ROOT/phpbb/config.php permissions"
+      return 1
+    }
+    if ! cp "$PHPBB_ROOT/config/config.php" "$PHPBB_ROOT/phpbb/config.php" ; then
+      log "ERROR: couldn't copy $PHPBB_ROOT config/config.php to phpbb/config.php"
+      return 1
+    fi
+    # Double-check phpbb/config.php permissions again
+    chmod 640 "$PHPBB_ROOT/phpbb/config.php" || {
+      log "ERROR: Failed to set $PHPBB_ROOT/phpbb/config.php permissions"
+      return 1
+    }
+  fi
+  return 0
+}
+
 # Configure phpBB if not already configured
 configure_phpbb() {
   # Check if config.php exists and is not empty
-  if [ ! -f "${PHPBB_ROOT:-/opt/phpbb}/phpbb/config.php" ] || [ ! -s "${PHPBB_ROOT:-/opt/phpbb}/phpbb/config.php" ]; then
+  if [ ! -f "$PHPBB_ROOT/phpbb/config.php" ] || [ ! -s "$PHPBB_ROOT/phpbb/config.php" ]; then
     log "Configuration file not found or is empty, running YML-based installer..."
     if ! /opt/.docker/install-from-yml.sh; then
       log "ERROR: Failed to configure phpBB. Exiting container."
@@ -94,14 +120,13 @@ configure_phpbb() {
   else
     log "phpBB already configured, skipping installation"
 
-    
     # Even if installation was skipped, ensure the install directory is removed
-    INSTALL_DIR="${PHPBB_ROOT:-/opt/phpbb}/phpbb/install"
+    INSTALL_DIR="$PHPBB_ROOT/phpbb/install"
     if [ -d "$INSTALL_DIR" ]; then
-      log "install directory found: might be a persistent DB with a new docker image and mounted subvolumes only -> update database migration"
+      log "install directory found: likely a new docker image/installation and mounted subvolumes only -> update database migration"
       if ! /opt/.docker/update-db-migration.sh; then
         log "ERROR: Failed to update and run database migration."
-	return 1
+        return 1
       fi
       
       log "SECURITY: Removing phpBB install directory..."
@@ -284,6 +309,7 @@ main() {
   
   # Install and configure phpBB
   install_phpbb || exit 1
+  copy_config_php || exit 1
   configure_phpbb || exit 1
   apply_custom_php_ini || exit 1
   

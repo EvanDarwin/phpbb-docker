@@ -146,7 +146,7 @@ RUN if [ -z "${PHPBB_VERSION}" ]; then \
     mkdir -p ${PHPBB_ROOT}/phpbb && \
     mv "phpBB3"/* ${PHPBB_ROOT}/phpbb/ && \
     rm -rf "phpBB3" && \
-    mkdir -p ${PHPBB_ROOT}/phpbb/config && \
+    mkdir -p ${PHPBB_ROOT}/config && \
     touch ${PHPBB_ROOT}/phpbb/config/config.php && \
     chown -R phpbb:phpbb ${PHPBB_ROOT} && \
     # Set base permissions
@@ -154,7 +154,8 @@ RUN if [ -z "${PHPBB_VERSION}" ]; then \
     mkdir -p ${PHPBB_ROOT}/phpbb/images/avatars/uploads && \
     # Set writable directory permissions
     chmod -v 0770 ${PHPBB_ROOT}/phpbb/store ${PHPBB_ROOT}/phpbb/cache ${PHPBB_ROOT}/phpbb/files ${PHPBB_ROOT}/phpbb/images/avatars/uploads/ && \
-    chmod 0640 ${PHPBB_ROOT}/phpbb/config/config.php && \
+    chmod -v 0640 ${PHPBB_ROOT}/config && \
+    chmod -v 0640 ${PHPBB_ROOT}/phpbb/config/config.php && \
     # Set subdirectory permissions
     find ${PHPBB_ROOT}/phpbb/cache -type d -exec chmod 750 {} \; && \
     find ${PHPBB_ROOT}/phpbb/store -type d -exec chmod 750 {} \; 2>/dev/null || true && \

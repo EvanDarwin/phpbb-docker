@@ -285,6 +285,9 @@ if [ $RESULT -eq 0 ] && [ ! -s "$CONFIG_FILE" ]; then
   log "ERROR: Installation completed but config/config.php is empty or missing"
   log "       This indicates that the installation process failed to write configuration data"
   RESULT=1
+else
+  # copy config.php to $PHPBB_ROOT/config/ folder that was possibly mounted as persistent
+  cp -p "${PHPBB_ROOT}/phpbb/config.php" "${PHPBB_ROOT}/config/config.php"
 fi
 
 # Only remove install directory if installation was successful
