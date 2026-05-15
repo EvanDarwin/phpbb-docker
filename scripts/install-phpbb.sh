@@ -144,31 +144,54 @@ extract_phpbb_files() {
   return 0
 }
 
-# Move phpBB files to the destination directory with better error handling
-move_files_to_destination() {
-  log "Moving files to destination directory: $PHPBB_ROOT/phpbb"
-  
-  # Ensure destination directory exists
-  mkdir -p "$PHPBB_ROOT/phpbb" || { log "ERROR: Failed to create phpBB root directory"; return 1; }
-  
+robust_copy () {
   # Move files to destination with rsync if available for better handling of existing files
+  log "copy from $1 to $2"
   if command -v rsync >/dev/null 2>&1; then
-    log "Using rsync to copy files..."
-    if ! rsync -a "$TMP_DIR/phpBB3/" "$PHPBB_ROOT/phpbb/"; then
+    if ! rsync -a "$1" "$2"; then
       log "ERROR: Failed to rsync phpBB files to destination directory"
       return 1
     fi
   else
     # Fallback to cp if rsync is not available
-    log "Rsync not available, using cp..."
-    if ! cp -a "$TMP_DIR/phpBB3/"* "$PHPBB_ROOT/phpbb/"; then
+    log "Rsync not available, using cp -a ..."
+    if ! cp -a "${1%/}" "${2%/}"; then
       log "ERROR: Failed to copy phpBB files to destination directory"
       return 1
     fi
   fi
+}
 
-  # Create config directory and empty config.php file
-  mkdir -p "$PHPBB_ROOT/phpbb/config" || { log "ERROR: Failed to create config directory"; return 1; }
+# Move phpBB files to the destination directory with better error handling
+move_files_to_destination() {
+  log "Moving files to destination directory: $PHPBB_ROOT/phpbb"
+
+  # Ensure destination directory exists
+  mkdir -p "$PHPBB_ROOT/phpbb" || { log "ERROR: Failed to create phpBB root directory"; return 1; }
+
+  if [ ! -f "$PHPBB_ROOT/phpbb/index.php" ] ; then
+    robust_copy "$TMP_DIR/phpBB3/" "$PHPBB_ROOT/phpbb/"
+  else
+    # check for docker volumes mounted to subfolders that need to be populated
+    if [ ! -f "$PHPBB_ROOT/store/index.htm" ] ; then
+       robust_copy "$TMP_DIR/phpBB3/store/" "$PHPBB_ROOT/phpbb/store/"
+    fi
+    if [ ! -f "$PHPBB_ROOT/files/index.htm" ] ; then
+       robust_copy "$TMP_DIR/phpBB3/files/" "$PHPBB_ROOT/phpbb/files/"
+    fi
+    if [ ! -f "$PHPBB_ROOT/images/index.htm" ] ; then
+       robust_copy "$TMP_DIR/phpBB3/images/" "$PHPBB_ROOT/phpbb/images/"
+    fi
+    if [ ! -f "$PHPBB_ROOT/ext/index.htm" ] ; then
+       robust_copy "$TMP_DIR/phpBB3/ext/" "$PHPBB_ROOT/phpbb/ext/"
+    fi
+    if [ ! -d "$PHPBB_ROOT/styles/all/" ] ; then
+       robust_copy "$TMP_DIR/phpBB3/styles/" "$PHPBB_ROOT/phpbb/styles/"
+    fi
+  fi
+
+  # Create empty config.php file to ensure we can set permissions
+  # (config folder needs to to be overwritten)
   touch "$PHPBB_ROOT/phpbb/config/config.php" || { log "ERROR: Failed to create config.php file"; return 1; }
   
   log "Files moved successfully to $PHPBB_ROOT/phpbb"

@@ -67,7 +67,12 @@ setup_php_version() {
 
 # Install phpBB if not already installed
 install_phpbb() {
-  if [ ! -f "${PHPBB_ROOT:-/opt/phpbb}/phpbb/index.php" ]; then
+  if [ ! -f "${PHPBB_ROOT:-/opt/phpbb}/phpbb/index.php" ] || \
+     [ ! -f "${PHPBB_ROOT:-/opt/phpbb}/store/index.htm" ] || \
+     [ ! -f "${PHPBB_ROOT:-/opt/phpbb}/files/index.htm" ] || \
+     [ ! -f "${PHPBB_ROOT:-/opt/phpbb}/images/index.htm" ] || \
+     [ ! -f "${PHPBB_ROOT:-/opt/phpbb}/ext/index.htm" ] || \
+     [ ! -d "${PHPBB_ROOT:-/opt/phpbb}/styles/all/" ] ; then
     log "phpBB files not found at ${PHPBB_ROOT:-/opt/phpbb}/phpbb, running install script..."
     if ! /opt/.docker/install-phpbb.sh "${PHPBB_VERSION}"; then
       log "ERROR: Failed to install phpBB. Exiting container."

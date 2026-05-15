@@ -80,6 +80,7 @@ RUN apk update && \
     apk add --no-cache \
     nginx \
     curl \
+    rsync \
     unzip \
     libcap \
     ca-certificates \
