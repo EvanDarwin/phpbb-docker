@@ -154,7 +154,7 @@ RUN if [ -z "${PHPBB_VERSION}" ]; then \
     mkdir -p ${PHPBB_ROOT}/phpbb/images/avatars/uploads && \
     # Set writable directory permissions
     chmod -v 0770 ${PHPBB_ROOT}/phpbb/store ${PHPBB_ROOT}/phpbb/cache ${PHPBB_ROOT}/phpbb/files ${PHPBB_ROOT}/phpbb/images/avatars/uploads/ && \
-    chmod -v 0640 ${PHPBB_ROOT}/config && \
+    chmod -v 0750 ${PHPBB_ROOT}/config && \
     chmod -v 0640 ${PHPBB_ROOT}/phpbb/config/config.php && \
     # Set subdirectory permissions
     find ${PHPBB_ROOT}/phpbb/cache -type d -exec chmod 750 {} \; && \
