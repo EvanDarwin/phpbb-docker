@@ -307,14 +307,15 @@ main() {
   validate_environment || exit 1
   setup_php_version || exit 1
   
+  # Check database connectivity
+  check_database_connectivity || exit 1
+
   # Install and configure phpBB
   install_phpbb || exit 1
   copy_config_php || exit 1
   configure_phpbb || exit 1
   apply_custom_php_ini || exit 1
   
-  # Check database connectivity
-  check_database_connectivity || exit 1
   
   # Setup logging and start services
   setup_log_forwarding || exit 1

@@ -227,7 +227,7 @@ COOKIE_SECURE="${COOKIE_SECURE:-false}"
 
 # Validate database config and test connection before installation
 validate_db_config || exit 1
-test_db_connection || exit 1
+test_db_connection || sleep 10 && test_db_connection ||  exit 1
 
 # Generate YAML config - more readable format
 cat > "$CONFIG_YML" << EOF
