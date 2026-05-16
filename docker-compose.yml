@@ -8,7 +8,8 @@ volumes:
   mysql_data:
 
 networks:
-  phpbb_net:
+  phpbb-net:
+    driver: bridge
 
 services:
   phpbb:
@@ -16,18 +17,18 @@ services:
     ports:
       - '8080:8080'
     environment:
-      - PHPBB_FORUM_NAME=My Amazing Forum
-      - PHPBB_FORUM_DESCRIPTION=Welcome to my phpBB forum
-      - PHPBB_USERNAME=admin
-      - PHPBB_PASSWORD=secure_password # <- CHANGE THIS!
-      - PHPBB_EMAIL=admin@example.com
-      - PHPBB_DATABASE_DRIVER=mysqli
-      - PHPBB_DATABASE_HOST=mysql
-      - PHPBB_DATABASE_NAME=phpbb
-      - PHPBB_DATABASE_USER=phpbb
-      - PHPBB_DATABASE_PASSWORD=mysql_password # <- CHANGE THIS!
-      - SERVER_NAME=forums.example.com
-      - COOKIE_SECURE=false
+      PHPBB_FORUM_NAME: My Amazing Forum
+      PHPBB_FORUM_DESCRIPTION: Welcome to my phpBB forum
+      PHPBB_USERNAME: admin
+      PHPBB_PASSWORD: secure_password # <- CHANGE THIS!
+      PHPBB_EMAIL: admin@example.com
+      PHPBB_DATABASE_DRIVER: mysqli
+      PHPBB_DATABASE_HOST: mysql
+      PHPBB_DATABASE_NAME: phpbb
+      PHPBB_DATABASE_USER: phpbb
+      PHPBB_DATABASE_PASSWORD: mysql_password # <- CHANGE THIS!
+      SERVER_NAME: forums.example.com
+      COOKIE_SECURE: false
     volumes:
       - phpbb_config:/opt/phpbb/config  # other path: no typo! should only contain config.php
       - phpbb_files:/opt/phpbb/phpbb/files
@@ -37,8 +38,6 @@ services:
       - phpbb_styles:/opt/phpbb/phpbb/styles  # optional
     depends_on:
       - mysql
-    networks:
-      - phpbb_net
     restart: unless-stopped
     healthcheck:
       test: ['CMD', 'curl', '-f', 'http://localhost:8080/']
@@ -46,23 +45,19 @@ services:
       timeout: 5s
       retries: 3
       start_period: 30s
+    networks:
+      - phpbb-net
 
   mysql:
-    image: mysql:8.0
+    image: mariadb:latest
     environment:
-      - MYSQL_ROOT_PASSWORD=root_password # <- CHANGE THIS!
-      - MYSQL_DATABASE=phpbb
-      - MYSQL_USER=phpbb
-      - MYSQL_PASSWORD=mysql_password # <- CHANGE THIS!
+      MARIADB_RANDOM_ROOT_PASSWORD: yes
+      MARIADB_DATABASE: phpbb
+      MARIADB_USER: phpbb
+      MARIADB_PASSWORD: mysql_password # <- CHANGE THIS!
     volumes:
       - mysql_data:/var/lib/mysql
-    networks:
-      - phpbb_net
     restart: unless-stopped
-    healthcheck:
-      test:
-        ['CMD', 'mysqladmin', 'ping', '-h', 'localhost', '-u', 'root', '-p${MYSQL_ROOT_PASSWORD}']
-      interval: 10s
-      timeout: 5s
-      retries: 3
-      start_period: 30s
+    networks:
+      - phpbb-net
+

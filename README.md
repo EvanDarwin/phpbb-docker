@@ -216,12 +216,12 @@ docker ... -v phpbb_config:/opt/phpbb/config:ro ...
 If you have (a backup of) an existing installation with database and config.php, you can restore these folders and the database from the backup.
 
 ## Upgrade path
-If you mount the full `/opt/phpbb` folder persistently (option 1 above), the docker container will not upgrade to new versions correctly (at least as of now).
+If you mount the full `/opt/phpbb` folder persistently (option 1 above), the docker container will not upgrade to new versions correctly (at least as of now), since the volume mount hides the updated forum files of the container.
 
 However, if you choose option 2 to mount only the `config.php` and folders `store`, `files` and `images` persistently, and optionally `ext` and `styles`,
 then upgrading the docker volume is equivalent to a [full upgrade](https://www.phpbb.com/support/docs/en/3.3/ug/upgradeguide/update_full/).
 
-In that case, upgrading the docker container will also perform the database migration automatically.
+In that case, the container is setup to automatically perform database migrations as well on startup.
 
 ## Custom PHP Configuration
 
@@ -329,7 +329,18 @@ specify a version.
 Here's a complete example using Docker Compose with MySQL:
 
 ```yaml
-version: '3.8'
+volumes:
+  phpbb_config:
+  phpbb_files:
+  phpbb_store:
+  phpbb_images:
+  phpbb_ext:
+  phpbb_styles:
+  mysql_data:
+
+networks:
+  phpbb-net:
+    driver: bridge
 
 services:
   phpbb:
@@ -337,20 +348,25 @@ services:
     ports:
       - '8080:8080'
     environment:
-      - PHPBB_FORUM_NAME=My Amazing Forum
-      - PHPBB_FORUM_DESCRIPTION=Welcome to my phpBB forum
-      - PHPBB_USERNAME=admin
-      - PHPBB_PASSWORD=secure_password
-      - PHPBB_EMAIL=admin@example.com
-      - PHPBB_DATABASE_DRIVER=mysqli
-      - PHPBB_DATABASE_HOST=mysql
-      - PHPBB_DATABASE_NAME=phpbb
-      - PHPBB_DATABASE_USER=phpbb
-      - PHPBB_DATABASE_PASSWORD=mysql_password
-      - SERVER_NAME=forums.example.com
-      - COOKIE_SECURE=false
+      PHPBB_FORUM_NAME: My Amazing Forum
+      PHPBB_FORUM_DESCRIPTION: Welcome to my phpBB forum
+      PHPBB_USERNAME: admin
+      PHPBB_PASSWORD: secure_password # <- CHANGE THIS!
+      PHPBB_EMAIL: admin@example.com
+      PHPBB_DATABASE_DRIVER: mysqli
+      PHPBB_DATABASE_HOST: mysql
+      PHPBB_DATABASE_NAME: phpbb
+      PHPBB_DATABASE_USER: phpbb
+      PHPBB_DATABASE_PASSWORD: mysql_password # <- CHANGE THIS!
+      SERVER_NAME: forums.example.com
+      COOKIE_SECURE: false
     volumes:
-      - phpbb_data:/opt/phpbb
+      - phpbb_config:/opt/phpbb/config  # other path: no typo! should only contain config.php
+      - phpbb_files:/opt/phpbb/phpbb/files
+      - phpbb_store:/opt/phpbb/phpbb/store
+      - phpbb_images:/opt/phpbb/phpbb/images
+      - phpbb_ext:/opt/phpbb/phpbb/ext  # optional
+      - phpbb_styles:/opt/phpbb/phpbb/styles  # optional
     depends_on:
       - mysql
     restart: unless-stopped
@@ -360,28 +376,21 @@ services:
       timeout: 5s
       retries: 3
       start_period: 30s
+    networks:
+      - phpbb-net
 
   mysql:
-    image: mysql:8.0
+    image: mariadb:latest
     environment:
-      - MYSQL_ROOT_PASSWORD=root_password
-      - MYSQL_DATABASE=phpbb
-      - MYSQL_USER=phpbb
-      - MYSQL_PASSWORD=mysql_password
+      MARIADB_RANDOM_ROOT_PASSWORD: yes
+      MARIADB_DATABASE: phpbb
+      MARIADB_USER: phpbb
+      MARIADB_PASSWORD: mysql_password # <- CHANGE THIS!
     volumes:
       - mysql_data:/var/lib/mysql
     restart: unless-stopped
-    healthcheck:
-      test:
-        ['CMD', 'mysqladmin', 'ping', '-h', 'localhost', '-u', 'root', '-p${MYSQL_ROOT_PASSWORD}']
-      interval: 10s
-      timeout: 5s
-      retries: 3
-      start_period: 30s
-
-volumes:
-  phpbb_data:
-  mysql_data:
+    networks:
+      - phpbb-net
 ```
 
 For PostgreSQL, replace the MySQL service with:
@@ -390,9 +399,9 @@ For PostgreSQL, replace the MySQL service with:
 postgres:
   image: postgres:15
   environment:
-    - POSTGRES_PASSWORD=postgres_password
-    - POSTGRES_USER=phpbb
-    - POSTGRES_DB=phpbb
+    POSTGRES_PASSWORD: postgres_password
+    POSTGRES_USER: phpbb
+    POSTGRES_DB: phpbb
   volumes:
     - postgres_data:/var/lib/postgresql/data
   restart: unless-stopped
@@ -520,6 +529,8 @@ Kubernetes, or Docker Compose with health checks.
 
    - If mounting volumes, ensure they have the correct ownership and permissions
    - The container uses a non-root user with UID/GID different from the host, by default 100/101.
+   - Docker populates *empty* volumes (but not mounts!) with the pre-existing folders.
+   - Use a different entrypoint, e.g. `docker compose run --entrypoint sh -it phpbb` to trouble-shoot permissions in the volumes.
 
 3. **PHP Configuration**:
 
