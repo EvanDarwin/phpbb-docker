@@ -1,6 +1,8 @@
 #!/bin/sh
 set -eu
 
+PHPBB_ROOT=$PHPBB_ROOT
+
 log() {
   echo "[$(hostname)] $1"
 }
@@ -35,7 +37,7 @@ validate_environment() {
   fi
   
   # Conditionally required variables
-  if [ ! -f "${PHPBB_ROOT:-/opt/phpbb}/phpbb/index.php" ] && [ -z "${PHPBB_VERSION:-}" ]; then
+  if [ ! -f "${PHPBB_ROOT}/phpbb/index.php" ] && [ -z "${PHPBB_VERSION:-}" ]; then
     log "ERROR: PHPBB_VERSION environment variable is required for initial installation"
     missing_vars=$((missing_vars + 1))
   fi
@@ -67,8 +69,13 @@ setup_php_version() {
 
 # Install phpBB if not already installed
 install_phpbb() {
-  if [ ! -f "${PHPBB_ROOT:-/opt/phpbb}/phpbb/index.php" ]; then
-    log "phpBB files not found at ${PHPBB_ROOT:-/opt/phpbb}/phpbb, running install script..."
+  if [ ! -f "$PHPBB_ROOT/phpbb/index.php" ] || \
+     [ ! -f "$PHPBB_ROOT/phpbb/store/index.htm" ] || \
+     [ ! -f "$PHPBB_ROOT/phpbb/files/index.htm" ] || \
+     [ ! -f "$PHPBB_ROOT/phpbb/images/index.htm" ] || \
+     [ ! -f "$PHPBB_ROOT/phpbb/ext/index.htm" ] || \
+     [ ! -d "$PHPBB_ROOT/phpbb/styles/all/" ] ; then
+    log "phpBB files not found at $PHPBB_ROOT/phpbb, running install script..."
     if ! /opt/.docker/install-phpbb.sh "${PHPBB_VERSION}"; then
       log "ERROR: Failed to install phpBB. Exiting container."
       return 1
@@ -77,10 +84,36 @@ install_phpbb() {
   return 0
 }
 
+# allow to keep config.php and robots.txt in separate $PHPBB_ROOT/config folder
+# copying from there at startup and copying back in `install-from-yml.sh`
+copy_config_php() {
+  mkdir -p "$PHPBB_ROOT/phpbb"
+  if [ -f "$PHPBB_ROOT/config/config.php" ] ; then
+    for CONFIGFILE in config.php robots.txt ; do
+      log "copy $PHPBB_ROOT/config/$CONFIGFILE to phpbb installation"
+      # update permissions
+      chmod 640 "$PHPBB_ROOT/config/$CONFIGFILE" || {
+        log "ERROR: Failed to set $PHPBB_ROOT/phpbb/$CONFIGFILE permissions"
+        return 1
+      }
+      if ! cp "$PHPBB_ROOT/config/$CONFIGFILE" "$PHPBB_ROOT/phpbb/$CONFIGFILE" ; then
+        log "ERROR: couldn't copy $PHPBB_ROOT config/$CONFIGFILE to phpbb/$CONFIGFILE"
+        return 1
+      fi
+      # Double-check permissions again
+      chmod 640 "$PHPBB_ROOT/phpbb/$CONFIGFILE" || {
+        log "ERROR: Failed to set $PHPBB_ROOT/phpbb/$CONFIGFILE permissions"
+        return 1
+      }
+    done
+  fi
+  return 0
+}
+
 # Configure phpBB if not already configured
 configure_phpbb() {
   # Check if config.php exists and is not empty
-  if [ ! -f "${PHPBB_ROOT:-/opt/phpbb}/phpbb/config.php" ] || [ ! -s "${PHPBB_ROOT:-/opt/phpbb}/phpbb/config.php" ]; then
+  if [ ! -f "$PHPBB_ROOT/phpbb/config.php" ] || [ ! -s "$PHPBB_ROOT/phpbb/config.php" ]; then
     log "Configuration file not found or is empty, running YML-based installer..."
     if ! /opt/.docker/install-from-yml.sh; then
       log "ERROR: Failed to configure phpBB. Exiting container."
@@ -88,10 +121,16 @@ configure_phpbb() {
     fi
   else
     log "phpBB already configured, skipping installation"
-    
+
     # Even if installation was skipped, ensure the install directory is removed
-    INSTALL_DIR="${PHPBB_ROOT:-/opt/phpbb}/phpbb/install"
+    INSTALL_DIR="$PHPBB_ROOT/phpbb/install"
     if [ -d "$INSTALL_DIR" ]; then
+      log "install directory found: likely a new docker image/installation and mounted subvolumes only -> update database migration"
+      if ! /opt/.docker/update-db-migration.sh; then
+        log "ERROR: Failed to update and run database migration."
+        return 1
+      fi
+      
       log "SECURITY: Removing phpBB install directory..."
       if rm -rf "$INSTALL_DIR"; then
         log "SECURITY: Successfully removed phpBB install directory"
@@ -199,9 +238,9 @@ check_database_connectivity() {
       fi
       
       # Try connecting to MySQL with appropriate arguments
-      if command -v mysql >/dev/null 2>&1; then
+      if command -v mariadb >/dev/null 2>&1; then
         log "Testing MySQL connection to $db_host..."
-        if ! mysql -h "$db_host" ${db_port:+-P "$db_port"} -u "$db_user" ${db_pass:+-p"$db_pass"} -e "SELECT 1" >/dev/null 2>&1; then
+        if ! mariadb -h "$db_host" ${db_port:+-P "$db_port"} -u "$db_user" ${db_pass:+-p"$db_pass"} -e "SELECT 1" >/dev/null 2>&1; then
           log "WARNING: Could not connect to MySQL server at $db_host. phpBB may not function correctly!"
           result=0  # Don't fail the container, just warn
         else
@@ -270,13 +309,15 @@ main() {
   validate_environment || exit 1
   setup_php_version || exit 1
   
+  # Check database connectivity
+  check_database_connectivity || exit 1
+
   # Install and configure phpBB
   install_phpbb || exit 1
+  copy_config_php || exit 1
   configure_phpbb || exit 1
   apply_custom_php_ini || exit 1
   
-  # Check database connectivity
-  check_database_connectivity || exit 1
   
   # Setup logging and start services
   setup_log_forwarding || exit 1

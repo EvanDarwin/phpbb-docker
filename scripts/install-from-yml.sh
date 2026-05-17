@@ -95,21 +95,21 @@ test_db_connection() {
       # Set default MySQL port if not specified
       [ -z "$port" ] && port="3306"
       
-      if command -v mysql > /dev/null 2>&1; then
+      if command -v mariadb > /dev/null 2>&1; then
         log "Testing MySQL connection to $host:$port..."
-        if ! mysql -h "$host" -P "$port" -u "$user" ${pass:+-p"$pass"} -e "SELECT 1" > /dev/null 2>&1; then
+        if ! mariadb -h "$host" -P "$port" -u "$user" ${pass:+-p"$pass"} -e "SELECT 1" > /dev/null 2>&1; then
           log "ERROR: Failed to connect to MySQL database"
           return 1
         fi
         
         # Test if database exists or we can create it
-        if ! mysql -h "$host" -P "$port" -u "$user" ${pass:+-p"$pass"} -e "USE \`$name\`" > /dev/null 2>&1; then
+        if ! mariadb -h "$host" -P "$port" -u "$user" ${pass:+-p"$pass"} -e "USE \`$name\`" > /dev/null 2>&1; then
           log "Database '$name' doesn't exist, will be created during installation"
         fi
         
         log "MySQL connection successful"
       else
-        log "WARNING: mysql client not found, skipping connection test"
+        log "WARNING: mariadb client not found, skipping connection test"
       fi
       ;;
       
@@ -227,7 +227,7 @@ COOKIE_SECURE="${COOKIE_SECURE:-false}"
 
 # Validate database config and test connection before installation
 validate_db_config || exit 1
-test_db_connection || exit 1
+test_db_connection || sleep 10 && test_db_connection ||  exit 1
 
 # Generate YAML config - more readable format
 cat > "$CONFIG_YML" << EOF
@@ -285,6 +285,9 @@ if [ $RESULT -eq 0 ] && [ ! -s "$CONFIG_FILE" ]; then
   log "ERROR: Installation completed but config/config.php is empty or missing"
   log "       This indicates that the installation process failed to write configuration data"
   RESULT=1
+else
+  # copy config.php to $PHPBB_ROOT/config/ folder that was possibly mounted as persistent
+  cp -p "${PHPBB_ROOT}/phpbb/config.php" "${PHPBB_ROOT}/config/config.php"
 fi
 
 # Only remove install directory if installation was successful
