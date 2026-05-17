@@ -84,26 +84,28 @@ install_phpbb() {
   return 0
 }
 
-# allow to keep config.php in separate $PHPBB_ROOT/config folder
+# allow to keep config.php and robots.txt in separate $PHPBB_ROOT/config folder
 # copying from there at startup and copying back in `install-from-yml.sh`
 copy_config_php() {
   mkdir -p "$PHPBB_ROOT/phpbb"
   if [ -f "$PHPBB_ROOT/config/config.php" ] ; then
-    log "copy $PHPBB_ROOT/config/config.php to phpbb installation"
-    # Double-check config/config.php permissions
-    chmod 640 "$PHPBB_ROOT/config/config.php" || {
-      log "ERROR: Failed to set $PHPBB_ROOT/phpbb/config.php permissions"
-      return 1
-    }
-    if ! cp "$PHPBB_ROOT/config/config.php" "$PHPBB_ROOT/phpbb/config.php" ; then
-      log "ERROR: couldn't copy $PHPBB_ROOT config/config.php to phpbb/config.php"
-      return 1
-    fi
-    # Double-check phpbb/config.php permissions again
-    chmod 640 "$PHPBB_ROOT/phpbb/config.php" || {
-      log "ERROR: Failed to set $PHPBB_ROOT/phpbb/config.php permissions"
-      return 1
-    }
+    for CONFIGFILE in config.php robots.txt ; do
+      log "copy $PHPBB_ROOT/config/$CONFIGFILE to phpbb installation"
+      # update permissions
+      chmod 640 "$PHPBB_ROOT/config/$CONFIGFILE" || {
+        log "ERROR: Failed to set $PHPBB_ROOT/phpbb/$CONFIGFILE permissions"
+        return 1
+      }
+      if ! cp "$PHPBB_ROOT/config/$CONFIGFILE" "$PHPBB_ROOT/phpbb/$CONFIGFILE" ; then
+        log "ERROR: couldn't copy $PHPBB_ROOT config/$CONFIGFILE to phpbb/$CONFIGFILE"
+        return 1
+      fi
+      # Double-check permissions again
+      chmod 640 "$PHPBB_ROOT/phpbb/$CONFIGFILE" || {
+        log "ERROR: Failed to set $PHPBB_ROOT/phpbb/$CONFIGFILE permissions"
+        return 1
+      }
+    done
   fi
   return 0
 }
