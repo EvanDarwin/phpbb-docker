@@ -75,11 +75,16 @@ setup_php_version() {
 DATA_DIR="${PHPBB_ROOT:-/opt/phpbb}/phpbb"
 prepare_data_dir() {
   local item
-  mkdir -p "$DATA_DIR"
+  mkdir -p "$DATA_DIR" || { log "ERROR: Could not create $DATA_DIR"; return 1; }
   for item in store files images ext styles language config.php; do
     if [ ! -e "$DATA_DIR/$item" ]; then
       log "Creating $DATA_DIR/$item"
-      cp -R "$PHPBB_DIST/$item" "$DATA_DIR/$item"
+      if ! cp -R "$PHPBB_DIST/$item" "$DATA_DIR/$item"; then
+        # Remove the partial copy, or the next boot would take it as complete
+        rm -rf "${DATA_DIR:?}/$item"
+        log "ERROR: Could not create $DATA_DIR/$item"
+        return 1
+      fi
     fi
   done
   return 0
@@ -136,70 +141,117 @@ BUNDLED_DIRS="styles language ext images"
 BASE_DIR="$DATA_DIR/.phpbb-dist-base"
 
 merge_base_dir() {
-  if [ -f "$BASE_DIR/VERSION" ]; then echo "$BASE_DIR"; else echo "$PHPBB_LEGACY_BASE"; fi
+  if [ -f "$BASE_DIR/VERSION" ]; then
+    echo "$BASE_DIR"
+  elif [ -f "$BASE_DIR.old/VERSION" ]; then
+    # save_bundled_base was stopped between its two renames: the previous base is
+    # still the one the volume's files came from (or merges cleanly with them)
+    echo "$BASE_DIR.old"
+  else
+    echo "$PHPBB_LEGACY_BASE"
+  fi
 }
 
 save_bundled_base() {
   local dir
-  rm -rf "${BASE_DIR:?}.new"
-  mkdir -p "$BASE_DIR.new"
-  for dir in $BUNDLED_DIRS; do cp -R "$PHPBB_DIST/$dir" "$BASE_DIR.new/$dir"; done
-  echo "$PHPBB_VERSION" > "$BASE_DIR.new/VERSION"
-  rm -rf "${BASE_DIR:?}"
-  mv "$BASE_DIR.new" "$BASE_DIR"
+  rm -rf "${BASE_DIR:?}.new" && mkdir -p "$BASE_DIR.new" || { log "ERROR: Could not create $BASE_DIR.new"; return 1; }
+  for dir in $BUNDLED_DIRS; do
+    cp -R "$PHPBB_DIST/$dir" "$BASE_DIR.new/$dir" || { log "ERROR: Could not save phpBB's $dir to $BASE_DIR.new"; return 1; }
+  done
+  echo "$PHPBB_VERSION" > "$BASE_DIR.new/VERSION" || { log "ERROR: Could not write $BASE_DIR.new/VERSION"; return 1; }
+  # Swap by renaming, and keep the previous base as .old until the new one is in
+  # place, so a stop at any point leaves merge_base_dir a base to use
+  if [ -e "$BASE_DIR" ]; then
+    rm -rf "${BASE_DIR:?}.old" && mv "$BASE_DIR" "$BASE_DIR.old" \
+      || { log "ERROR: Could not move $BASE_DIR aside"; return 1; }
+  fi
+  mv "$BASE_DIR.new" "$BASE_DIR" || { log "ERROR: Could not replace $BASE_DIR with $BASE_DIR.new"; return 1; }
+  rm -rf "${BASE_DIR:?}.old"
+  return 0
 }
 
 # Three-way merge of the bundled files into a staging directory, changing nothing
 # on the volume: base = merge_base_dir, ours = the volume, theirs = this image.
 # Files the admin didn't change take phpBB's new version, files phpBB didn't change
 # keep the admin's, and files both changed go through git merge-file. Files the
-# admin added are never looked at. Logs every conflict and returns 1 if any.
+# admin added are never looked at. The staged files are listed in .updates and the
+# files to remove in .deletes. Returns 1 after logging every conflict, or 2 if the
+# staging directory can't be written.
 stage_bundled_merge() {
-  local base="$1" stage="$2" rel b o t
-  : > "$stage/.deletes"
-  : > "$stage/.conflicts"
-  (cd "$base" && find $BUNDLED_DIRS -type f; cd "$PHPBB_DIST" && find $BUNDLED_DIRS -type f) | sort -u > "$stage/.files"
+  local base="$1" stage="$2" rel b o t rc conflicts=0
+  if ! : > "$stage/.updates" || ! : > "$stage/.deletes" \
+      || ! (cd "$base" && find $BUNDLED_DIRS -type f && cd "$PHPBB_DIST" && find $BUNDLED_DIRS -type f) > "$stage/.all" \
+      || ! sort -u "$stage/.all" > "$stage/.files"; then
+    log "ERROR: Could not list the files to merge in $stage"
+    return 2
+  fi
 
   while IFS= read -r rel; do
     b="$base/$rel"; o="$DATA_DIR/$rel"; t="$PHPBB_DIST/$rel"
     if [ ! -f "$t" ]; then
       # Removed by phpBB: remove it too, unless the admin changed it
-      if [ -f "$o" ] && [ -f "$b" ] && cmp -s "$o" "$b"; then echo "$rel" >> "$stage/.deletes"; fi
+      if [ -f "$o" ] && [ -f "$b" ] && cmp -s "$o" "$b"; then
+        echo "$rel" >> "$stage/.deletes" || { log "ERROR: Could not write $stage/.deletes"; return 2; }
+      fi
     elif [ ! -e "$o" ]; then
       # New in this version, or deleted by the admin (kept deleted unless phpBB changed it)
       if [ ! -f "$b" ]; then
-        mkdir -p "$(dirname "$stage/$rel")"; cp "$t" "$stage/$rel"
+        stage_file "$t" "$stage" "$rel" || return 2
       elif ! cmp -s "$b" "$t"; then
-        echo "$rel" >> "$stage/.conflicts"
+        conflicts=$((conflicts + 1))
         log "ERROR: $rel was deleted from the volume but changed in phpBB ${PHPBB_VERSION}"
       fi
     elif cmp -s "$o" "$t" || { [ -f "$b" ] && cmp -s "$t" "$b"; }; then
       :  # already up to date, or unchanged by phpBB: keep the admin's file
     elif [ -f "$b" ] && cmp -s "$o" "$b"; then
-      mkdir -p "$(dirname "$stage/$rel")"; cp "$t" "$stage/$rel"
+      stage_file "$t" "$stage" "$rel" || return 2
     else
-      mkdir -p "$(dirname "$stage/$rel")"
-      if ! git merge-file -p --diff3 -L "volume" -L "phpBB $(cat "$base/VERSION")" -L "phpBB ${PHPBB_VERSION}" \
-          "$o" "$( [ -f "$b" ] && echo "$b" || echo /dev/null )" "$t" > "$stage/$rel" 2>/dev/null; then
-        echo "$rel" >> "$stage/.conflicts"
+      mkdir -p "$(dirname "$stage/$rel")" || { log "ERROR: Could not stage $rel in $stage"; return 2; }
+      rc=0
+      git merge-file -p --diff3 -L "volume" -L "phpBB $(cat "$base/VERSION")" -L "phpBB ${PHPBB_VERSION}" \
+        "$o" "$( [ -f "$b" ] && echo "$b" || echo /dev/null )" "$t" > "$stage/$rel" 2> "$stage/.merge-error" || rc=$?
+      if [ "$rc" -eq 0 ]; then
+        echo "$rel" >> "$stage/.updates" || { log "ERROR: Could not write $stage/.updates"; return 2; }
+      elif [ "$rc" -lt 128 ]; then
+        # git merge-file exits with the number of conflicts
+        conflicts=$((conflicts + 1))
         log "ERROR: $rel was changed on the volume and in phpBB ${PHPBB_VERSION}, and the changes conflict:"
         awk '/^<<<<<<< /{show=1; printf "  at line %d:\n", NR} show{print "    " $0} /^>>>>>>> /{show=0}' "$stage/$rel" \
           | while IFS= read -r line; do log "$line"; done
-        rm -f "$stage/$rel"
+      else
+        # A negative exit (255): git can't merge it at all, as with binary files
+        conflicts=$((conflicts + 1))
+        log "ERROR: $rel was changed on the volume and in phpBB ${PHPBB_VERSION}, and git can't merge it: $(cat "$stage/.merge-error")"
       fi
     fi
   done < "$stage/.files"
 
-  [ ! -s "$stage/.conflicts" ]
+  [ "$conflicts" -eq 0 ] || return 1
+  return 0
 }
 
+# Copy $1 into the staging directory $2 as $3, and list it in .updates
+stage_file() {
+  mkdir -p "$(dirname "$2/$3")" && cp "$1" "$2/$3" && echo "$3" >> "$2/.updates" \
+    || { log "ERROR: Could not stage $3 in $2"; return 1; }
+}
+
+# Write the staged files to the volume (each replaced in one rename, so a failure
+# never leaves a half-written file) and remove the ones phpBB removed
 apply_bundled_merge() {
   local stage="$1" rel
-  (cd "$stage" && find $BUNDLED_DIRS -type f 2>/dev/null) | while IFS= read -r rel; do
-    mkdir -p "$(dirname "$DATA_DIR/$rel")"
-    cp "$stage/$rel" "$DATA_DIR/$rel"
-  done
-  while IFS= read -r rel; do rm -f "${DATA_DIR:?}/$rel"; done < "$stage/.deletes"
+  while IFS= read -r rel; do
+    if ! mkdir -p "$(dirname "$DATA_DIR/$rel")" || ! cp "$stage/$rel" "$DATA_DIR/$rel.phpbb-new" \
+        || ! mv "$DATA_DIR/$rel.phpbb-new" "$DATA_DIR/$rel"; then
+      rm -f "$DATA_DIR/$rel.phpbb-new"
+      log "ERROR: Could not write $DATA_DIR/$rel"
+      return 1
+    fi
+  done < "$stage/.updates"
+  while IFS= read -r rel; do
+    rm -f "${DATA_DIR:?}/$rel" || { log "ERROR: Could not remove $DATA_DIR/$rel"; return 1; }
+  done < "$stage/.deletes"
+  return 0
 }
 
 # Upgrade backups: everything on the volume, plus a dump of MySQL and PostgreSQL
@@ -238,14 +290,15 @@ dump_database() {
 backup_before_upgrade() {
   local zip dump_dir
   zip="$BACKUP_DIR/phpbb-$1-$(date -u +%Y%m%dT%H%M%SZ).zip"
-  mkdir -p "$BACKUP_DIR"
-  dump_dir=$(mktemp -d)
+  mkdir -p "$BACKUP_DIR" || { log "ERROR: Could not create $BACKUP_DIR"; return 1; }
+  dump_dir=$(mktemp -d) || { log "ERROR: Could not create a directory for the database dump"; return 1; }
   if ! dump_database "$dump_dir"; then
     log "WARNING: Could not dump the database; the backup will contain the files on the volume only"
   fi
   if ! BACKUP_ZIP="$zip.partial" BACKUP_DUMPS="$dump_dir" "php${PHP_VERSION}" -r '
       $root = rtrim(getenv("PHPBB_ROOT"), "/");
-      $skip = array($root . "/backups", $root . "/phpbb/.phpbb-dist-base");
+      $base = $root . "/phpbb/.phpbb-dist-base";
+      $skip = array($root . "/backups", $base, $base . ".new", $base . ".old");
       $zip = new ZipArchive();
       if ($zip->open(getenv("BACKUP_ZIP"), ZipArchive::CREATE | ZipArchive::OVERWRITE) !== true) exit(1);
       $files = new RecursiveIteratorIterator(new RecursiveDirectoryIterator($root, FilesystemIterator::SKIP_DOTS), RecursiveIteratorIterator::SELF_FIRST);
@@ -256,11 +309,10 @@ backup_before_upgrade() {
         if ($file->isDir()) $zip->addEmptyDir($name); else $zip->addFile($path, $name);
       }
       foreach (glob(getenv("BACKUP_DUMPS") . "/*") as $dump) $zip->addFile($dump, "database/" . basename($dump));
-      exit($zip->close() ? 0 : 1);'; then
+      exit($zip->close() ? 0 : 1);' || ! mv "$zip.partial" "$zip"; then
     rm -rf "$dump_dir" "$zip.partial"
     return 1
   fi
-  mv "$zip.partial" "$zip"
   rm -rf "$dump_dir"
   log "Backed up the board to $zip ($(du -h "$zip" | cut -f1))"
   return 0
@@ -271,7 +323,7 @@ backup_before_upgrade() {
 # phpBB's official CLI updater migrates it (database only: the code comes from the
 # image), and finally the merged files are written to the volume.
 upgrade_phpbb() {
-  local state needs_db=false needs_files=false stage base from update_dir rc=0
+  local state needs_db=false needs_files=false stage base from update_dir merge_rc=0 rc=0
   [ "$NEW_INSTALL" = false ] || return 0
 
   state=$(phpbb_db_version_state) || { log "ERROR: Could not read the board's phpBB version from its database"; return 1; }
@@ -284,21 +336,25 @@ upgrade_phpbb() {
   [ "$(cat "$BASE_DIR/VERSION" 2>/dev/null)" = "$PHPBB_VERSION" ] || needs_files=true
   [ "$needs_db" = true ] || [ "$needs_files" = true ] || return 0
 
-  stage=$(mktemp -d)
+  stage=$(mktemp -d) || { log "ERROR: Could not create a directory to stage the upgrade in"; return 1; }
   if [ "$needs_files" = true ]; then
     base=$(merge_base_dir)
     log "Merging phpBB's bundled styles, language packs, extensions and images from $(cat "$base/VERSION") to ${PHPBB_VERSION}..."
-    if ! stage_bundled_merge "$base" "$stage"; then
+    stage_bundled_merge "$base" "$stage" || merge_rc=$?
+    if [ "$merge_rc" -ne 0 ]; then
       rm -rf "$stage"
-      log "ERROR: Upgrade to phpBB ${PHPBB_VERSION} stopped before changing anything. Resolve the conflicts above in"
-      log "       $DATA_DIR (or restore phpBB's original file there), then restart the container."
+      if [ "$merge_rc" -eq 1 ]; then
+        log "ERROR: Upgrade to phpBB ${PHPBB_VERSION} stopped before changing anything. Resolve the conflicts above in"
+        log "       $DATA_DIR (or restore phpBB's original file there), then restart the container."
+      else
+        log "ERROR: Upgrade to phpBB ${PHPBB_VERSION} stopped before changing anything: the merged files could not be staged"
+      fi
       return 1
     fi
   fi
 
   # Back up before the first change, if anything is going to change at all
-  if [ "$needs_db" = true ] || [ -s "$stage/.deletes" ] \
-      || [ -n "$(cd "$stage" && find $BUNDLED_DIRS -type f 2>/dev/null | head -n 1)" ]; then
+  if [ "$needs_db" = true ] || [ -s "$stage/.updates" ] || [ -s "$stage/.deletes" ]; then
     from=${state#older:}
     [ "$needs_db" = true ] || from=$(cat "$(merge_base_dir)/VERSION")
     if ! backup_before_upgrade "$from"; then
@@ -310,8 +366,11 @@ upgrade_phpbb() {
 
   if [ "$needs_db" = true ]; then
     log "Updating the database from phpBB ${state#older:} to ${PHPBB_VERSION}..."
-    update_dir=$(mktemp -d)
-    printf 'updater:\n    type: db_only\n' > "$update_dir/update-config.yml"
+    if ! update_dir=$(mktemp -d) || ! printf 'updater:\n    type: db_only\n' > "$update_dir/update-config.yml"; then
+      rm -rf "$stage" "$update_dir"
+      log "ERROR: Upgrade to phpBB ${PHPBB_VERSION} stopped before changing anything: could not write the updater's settings"
+      return 1
+    fi
     (cd "$PHPBB_CODE" && "php${PHP_VERSION}" install/phpbbcli.php update "$update_dir/update-config.yml") || rc=$?
     rm -rf "$update_dir"
     # phpbbcli.php can exit 0 after a failed step, so confirm against the database
@@ -323,9 +382,13 @@ upgrade_phpbb() {
     fi
   fi
 
-  if [ "$needs_files" = true ]; then
-    apply_bundled_merge "$stage"
-    save_bundled_base
+  # Saving the new merge base marks the upgrade done, so it comes last: if any
+  # write fails, the next boot merges again (files already written compare equal)
+  if [ "$needs_files" = true ] && { ! apply_bundled_merge "$stage" || ! save_bundled_base; }; then
+    rm -rf "$stage"
+    log "ERROR: Could not write all of phpBB ${PHPBB_VERSION}'s merged files to $DATA_DIR."
+    log "       Restart the container to finish the upgrade."
+    return 1
   fi
   rm -rf "$stage"
   log "Board is up to date with phpBB ${PHPBB_VERSION}"
