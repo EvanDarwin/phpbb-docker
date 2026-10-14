@@ -8,7 +8,7 @@
 # the upgrade and downgrade tests (OLD_PHPBB_VERSION, default 3.3.15), unless
 # IMAGE / OLD_IMAGE name existing images. Needs docker and network access: the
 # builds download phpBB, and the upgrade tests start from the last published
-# image and pull mariadb:11 and mysql:8.0.
+# image and pull mariadb:11, mysql:8.0 and postgres:15.
 set -u
 cd "$(dirname "$0")/.."
 
@@ -27,9 +27,9 @@ fi
 export IMAGE OLD_IMAGE
 
 # Pull the external images up front so their progress output stays out of the results
-echo "Pulling the last published image, mariadb:11 and mysql:8.0..."
+echo "Pulling the last published image, mariadb:11, mysql:8.0 and postgres:15..."
 LEGACY_IMAGE=$(sed -n 's/^LEGACY_IMAGE="\(.*\)"$/\1/p' tests/lib.sh)
-docker pull -q "$LEGACY_IMAGE" >/dev/null && docker pull -q mariadb:11 >/dev/null && docker pull -q mysql:8.0 >/dev/null || { echo "Pull failed"; exit 1; }
+docker pull -q "$LEGACY_IMAGE" >/dev/null && docker pull -q mariadb:11 >/dev/null && docker pull -q mysql:8.0 >/dev/null && docker pull -q postgres:15 >/dev/null || { echo "Pull failed"; exit 1; }
 
 [ $# -gt 0 ] || set -- tests/test_*.sh
 failed_files=""

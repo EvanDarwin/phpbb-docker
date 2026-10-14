@@ -1,7 +1,8 @@
 #!/bin/sh
 # MySQL-family boards: one made by the last published image is migrated and dumped
 # into the backup; when the dump fails, a files-only backup is still made; boards
-# whose database is down at boot still start; MySQL 8.0 boards install and upgrade.
+# whose database is down at boot still start; MySQL 8.0 boards install, upgrade and
+# are dumped.
 . "$(dirname "$0")/lib.sh"
 
 version=$(image_phpbb_version "$IMAGE")
@@ -23,6 +24,7 @@ board_env() { echo "--network $net -e PHPBB_DATABASE_DRIVER=mysqli -e PHPBB_DATA
 db_version() { docker exec "$(c db)" mariadb -uphpbb -pdbpass "$1" -N -e "SELECT config_value FROM phpbb_config WHERE config_name='version'"; }
 mysql8_version() { docker exec "$(c mysql8)" mysql -uphpbb -pdbpass phpbb -N -e "SELECT config_value FROM phpbb_config WHERE config_name='version'" 2>/dev/null; }
 backup_entry_count() { docker exec "$(c "$1")" sh -c "unzip -l /opt/phpbb/backups/*.zip | grep -c ' database/database.sql\$'"; }
+dumped_version() { docker exec "$(c "$1")" sh -c "unzip -p /opt/phpbb/backups/*.zip database/database.sql | grep -o \"'version', *'[0-9.]*'\" | head -1"; }
 
 echo "MariaDB board from the last published image (phpBB $LEGACY_PHPBB_VERSION)"
 # shellcheck disable=SC2046
@@ -33,24 +35,26 @@ check "container is running" running up1
 check_eq "database upgraded to phpBB $version" "$version" "$(db_version phpbb)"
 check_eq "admin logs in" 2 "$(login up1 admin "$T_PASSWORD")"
 check_eq "backup includes a database dump" 1 "$(backup_entry_count up1)"
-check_has "the dump is of the database before the upgrade" "'version','$LEGACY_PHPBB_VERSION'" \
-  "$(docker exec "$(c up1)" sh -c "unzip -p /opt/phpbb/backups/*.zip database/database.sql | grep -o \"'version','[0-9.]*'\" | head -1")"
+check_has "the dump is of the database before the upgrade" "'$LEGACY_PHPBB_VERSION'" "$(dumped_version up1)"
+docker exec "$(c db)" mariadb -uroot -p"$root_password" -e "CREATE DATABASE restored; GRANT ALL ON restored.* TO 'phpbb'@'%';"
+docker exec "$(c up1)" sh -c 'unzip -p /opt/phpbb/backups/*.zip database/database.sql' \
+  | docker exec -i "$(c db)" mariadb -uphpbb -pdbpass restored
+check_eq "the dump restores into an empty database" "$LEGACY_PHPBB_VERSION" "$(db_version restored)"
 
 echo "MariaDB board from this image at phpBB $old_version, whose database dump fails"
-stub=$(mktemp)
-printf '#!/bin/sh\necho "simulated dump failure" >&2\nexit 2\n' > "$stub"
-chmod 755 "$stub"
 # shellcheck disable=SC2046
 start old2 "$OLD_IMAGE" -v "$(vol board2):/opt/phpbb" $(board_env phpbb2) -e PHPBB_PASSWORD="$T_PASSWORD"
 docker stop "$(c old2)" >/dev/null
+# phpBB's backup code doesn't quote table names, so it fails on this one, which
+# phpBB's updater never reads
+docker exec "$(c db)" mariadb -uphpbb -pdbpass phpbb2 -e 'CREATE TABLE `phpbb_zz broken` (a INT)'
 # shellcheck disable=SC2046
-start up2 "$IMAGE" -v "$(vol board2):/opt/phpbb" -v "$stub:/usr/bin/mariadb-dump:ro" $(board_env phpbb2) -e PHPBB_PASSWORD="$T_PASSWORD"
+start up2 "$IMAGE" -v "$(vol board2):/opt/phpbb" $(board_env phpbb2) -e PHPBB_PASSWORD="$T_PASSWORD"
 check "container is running" running up2
 check_has "warns that the dump failed" "Could not dump the database; the backup will contain the files on the volume only" "$(logs up2)"
 check_eq "backup has no database dump" 0 "$(backup_entry_count up2)"
 check "backup of the files was still written" docker exec "$(c up2)" sh -c 'unzip -tq /opt/phpbb/backups/*.zip'
 check_eq "database still upgraded to phpBB $version" "$version" "$(db_version phpbb2)"
-rm -f "$stub"
 
 echo "MariaDB boards whose database is down at boot"
 # shellcheck disable=SC2046
@@ -90,6 +94,7 @@ start up4 "$IMAGE" -v "$(vol board4):/opt/phpbb" $(board_env phpbb mysql8)
 check "upgraded container is running" running up4
 check_eq "database upgraded to phpBB $version" "$version" "$(mysql8_version)"
 check_eq "admin logs in" 2 "$(login up4 admin "$T_PASSWORD")"
+check_has "the backup holds a dump of the database before the upgrade" "'$old_version'" "$(dumped_version up4)"
 check_lacks "no false connection warning" "Could not connect to MySQL server" "$(logs up4)"
 
 finish

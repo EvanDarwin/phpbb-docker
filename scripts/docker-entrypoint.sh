@@ -263,29 +263,42 @@ apply_bundled_merge() {
 # databases, which don't live on the volume
 BACKUP_DIR="${PHPBB_ROOT:-/opt/phpbb}/backups"
 
-# Dump the board's database into $1/database.sql using the connection details in
-# its config.php. Nothing to do for SQLite (its file is on the volume); returns 1
-# if a MySQL or PostgreSQL dump fails.
+# Dump the board's MySQL or PostgreSQL database into $1/database.sql with phpBB's
+# own backup code (what ACP > Maintenance > Backup uses), over phpBB's own database
+# connection. Nothing to do for SQLite, whose file is on the volume; returns 1 if
+# the dump fails.
 dump_database() {
-  local out="$1/database.sql" settings dbms host port name user pass
-  settings=$("php${PHP_VERSION}" -r '
-    include getenv("PHPBB_ROOT") . "/phpbb/config.php";
-    foreach (array($dbms, $dbhost, $dbport, $dbname, $dbuser) as $value) echo $value, "\n";
-    echo base64_encode($dbpasswd), "\n";') || return 1
-  dbms=$(echo "$settings" | sed -n 1p)
-  host=$(echo "$settings" | sed -n 2p)
-  port=$(echo "$settings" | sed -n 3p)
-  name=$(echo "$settings" | sed -n 4p)
-  user=$(echo "$settings" | sed -n 5p)
-  pass=$(echo "$settings" | sed -n 6p | base64 -d)
-  case "$dbms" in
-    *mysqli|*mysql)
-      MYSQL_PWD="$pass" mariadb-dump -h "$host" ${port:+-P "$port"} -u "$user" --single-transaction "$name" > "$out" \
-        || { rm -f "$out"; return 1; } ;;
-    *postgres)
-      PGPASSWORD="$pass" pg_dump -h "$host" ${port:+-p "$port"} -U "$user" "$name" > "$out" \
-        || { rm -f "$out"; return 1; } ;;
-  esac
+  local out="$1/database.sql"
+  if ! "php${PHP_VERSION}" -r "$PHPBB_BOOTSTRAP"'
+      $db = $phpbb_container->get("dbal.conn");
+      if ($db->get_sql_layer() === "sqlite3") exit(0);
+      // The extractor calls helper functions defined with the ACP backup module
+      require($phpbb_root_path . "includes/acp/acp_database.php");
+      $extractor = $phpbb_container->get("dbal.extractor");
+      // In "download" mode the extractor writes the dump to standard output
+      $extractor->init_extractor("text", "backup", time(), true, false);
+      $extractor->write_start($table_prefix);
+      foreach ($phpbb_container->get("dbal.tools")->sql_list_tables() as $table) {
+        if ($table_prefix === "" || stripos($table, $table_prefix) === 0) {
+          $extractor->write_table($table);
+          $extractor->write_data($table);
+        }
+      }
+      $extractor->write_end();' > "$out"; then
+    rm -f "$out"
+    return 1
+  fi
+  [ -s "$out" ] || { rm -f "$out"; return 0; }
+  # phpBB's PostgreSQL dumps drop each table without IF EXISTS, all in one
+  # transaction, so they can't be restored into an empty database; add it, leaving
+  # COPY data alone. MySQL dumps already use IF EXISTS and have no COPY blocks.
+  if ! awk 'copy { print; if ($0 == "\\.") copy = 0; next }
+      /^COPY .* FROM stdin;$/ { copy = 1 }
+      /^DROP TABLE [^ ;]+;$/ { sub(/^DROP TABLE /, "DROP TABLE IF EXISTS ") }
+      { print }' "$out" > "$out.tmp" || ! mv "$out.tmp" "$out"; then
+    rm -f "$out" "$out.tmp"
+    return 1
+  fi
   return 0
 }
 
