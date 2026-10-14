@@ -11,14 +11,13 @@ handle_error() {
 }
 trap 'handle_error $LINENO' ERR
 
-# Set to true by validate_environment when PHPBB_PASSWORD was not provided
-PASSWORD_GENERATED=false
+# Set by validate_environment when it generates the admin password for a new install
+GENERATED_PASSWORD=""
 
 # Validate required environment variables
 validate_environment() {
   local missing_vars=0
-  local generated_password=""
-  
+
   # Required variables list - using eval for POSIX-compatible variable indirection
   for var in PHPBB_USERNAME; do
     eval val="\$${var}"
@@ -28,17 +27,15 @@ validate_environment() {
     fi
   done
   
-  # Generate secure password if not provided
-  if [ -z "${PHPBB_PASSWORD:-}" ]; then
+  # Generate a password for a new install if none was provided; an existing
+  # board already has one, and a new one would only be logged, never used
+  if [ -z "${PHPBB_PASSWORD:-}" ] && [ ! -s "${PHPBB_ROOT:-/opt/phpbb}/phpbb/config.php" ]; then
     # Generate a 12-character password from /dev/urandom, discarding bytes outside
     # the charset until we have enough. Charset is printable ASCII except " and \
     # (they break the installer's YAML) and & < > (phpBB's login HTML-escapes them,
     # but its CLI installer hashes them raw, so the admin could never log in)
-    generated_password=$(tr -dc '\041-\176' < /dev/urandom | tr -d '"\\&<>' | head -c 12)
-    export PHPBB_PASSWORD="$generated_password"
-    PASSWORD_GENERATED=true
-    log "SECURITY NOTICE: Generated secure password for admin user: $generated_password"
-    log "IMPORTANT: Write down this password now as it will not be shown again!"
+    GENERATED_PASSWORD=$(tr -dc '\041-\176' < /dev/urandom | tr -d '"\\&<>' | head -c 12)
+    export PHPBB_PASSWORD="$GENERATED_PASSWORD"
   fi
   
   # Conditionally required variables
@@ -129,7 +126,7 @@ classify_install() {
   [ -f "$INSTALL_VERSION_FILE" ] && return 0
 
   # Create the flag before the marker, so a failed flag write is retried next boot
-  if [ "$PASSWORD_GENERATED" = true ] && ! touch "$PASSWORD_WARNING_FILE"; then
+  if [ -z "${PHPBB_PASSWORD:-}" ] && ! touch "$PASSWORD_WARNING_FILE"; then
     log "WARNING: Could not create $PASSWORD_WARNING_FILE"
     return 0
   fi
@@ -144,6 +141,22 @@ mark_new_install() {
   if [ "$NEW_INSTALL" = true ] && ! echo 2 > "$INSTALL_VERSION_FILE"; then
     log "WARNING: Could not write $INSTALL_VERSION_FILE"
   fi
+  return 0
+}
+
+# Show a generated admin password once the installer has applied it: after the
+# installer's output so it is not buried, but before later steps that could fail
+# and exit, since the password is never shown or generated again
+show_generated_password() {
+  [ -n "$GENERATED_PASSWORD" ] || return 0
+  log "=============================================================================="
+  log "phpBB is installed. Log in as the admin with:"
+  log ""
+  log "  Username: ${PHPBB_USERNAME}"
+  log "  Password: ${GENERATED_PASSWORD}"
+  log ""
+  log "Save this password now: it was generated for you and will not be shown again."
+  log "=============================================================================="
   return 0
 }
 
@@ -334,6 +347,7 @@ main() {
   classify_install || exit 1
   configure_phpbb || exit 1
   mark_new_install || exit 1
+  show_generated_password || exit 1
   apply_custom_php_ini || exit 1
   
   # Check database connectivity
