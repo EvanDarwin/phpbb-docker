@@ -225,6 +225,25 @@ SERVER_PORT="${SERVER_PORT:-80}"
 SCRIPT_PATH="${SCRIPT_PATH:-/}"
 COOKIE_SECURE="${COOKIE_SECURE:-false}"
 
+# Written to the YAML unquoted, as a boolean: quoted, "false" would be stored as
+# text that phpBB treats as true, sending secure-only cookies over plain HTTP
+case "$COOKIE_SECURE" in
+  true|false) ;;
+  *) log "ERROR: COOKIE_SECURE must be true or false, got: $COOKIE_SECURE"; exit 1 ;;
+esac
+
+# phpBB's installer requires an integer here, so coerce the value to a number the
+# way JavaScript's +value would (PHP's is_numeric: whitespace, +, leading zeros and
+# 8080.0 are fine) and refuse anything that is not a whole port number
+PORT_INPUT="$SERVER_PORT"
+SERVER_PORT=$(PORT="$PORT_INPUT" "$PHP_EXECUTABLE" -r '
+  $v = getenv("PORT");
+  if (is_numeric($v) && (float) $v == (int) $v && (int) $v >= 1 && (int) $v <= 65535) echo (int) $v;')
+if [ -z "$SERVER_PORT" ]; then
+  log "ERROR: SERVER_PORT must be a port number from 1 to 65535, got: $PORT_INPUT"
+  exit 1
+fi
+
 # Validate database config and test connection before installation
 validate_db_config || exit 1
 test_db_connection || exit 1
