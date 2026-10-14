@@ -225,48 +225,97 @@ SERVER_PORT="${SERVER_PORT:-80}"
 SCRIPT_PATH="${SCRIPT_PATH:-/}"
 COOKIE_SECURE="${COOKIE_SECURE:-false}"
 
+# Written to the YAML unquoted, as a boolean: quoted, "false" would be stored as
+# text that phpBB treats as true, sending secure-only cookies over plain HTTP
+case "$COOKIE_SECURE" in
+  true|false) ;;
+  *) log "ERROR: COOKIE_SECURE must be true or false, got: $COOKIE_SECURE"; exit 1 ;;
+esac
+
+# phpBB's installer requires an integer here, so coerce the value to a number the
+# way JavaScript's +value would (PHP's is_numeric: whitespace, +, leading zeros and
+# 8080.0 are fine) and refuse anything that is not a whole port number
+PORT_INPUT="$SERVER_PORT"
+SERVER_PORT=$(PORT="$PORT_INPUT" "$PHP_EXECUTABLE" -r '
+  $v = getenv("PORT");
+  if (is_numeric($v) && (float) $v == (int) $v && (int) $v >= 1 && (int) $v <= 65535) echo (int) $v;')
+if [ -z "$SERVER_PORT" ]; then
+  log "ERROR: SERVER_PORT must be a port number from 1 to 65535, got: $PORT_INPUT"
+  exit 1
+fi
+
 # Validate database config and test connection before installation
 validate_db_config || exit 1
 test_db_connection || exit 1
+
+# Convert a value the way phpBB's request layer converts form input, using phpBB's
+# own type_cast_helper (newlines normalized, HTML-escaped, NFC-normalized, trimmed
+# if $2 is "trim"). The CLI installer stores values as given, but phpBB expects the
+# stored form of these fields to match what its forms would have stored.
+phpbb_input() {
+  PHPBB_INPUT_ROOT="${PHPBB_ROOT}/phpbb/" PHPBB_INPUT_VALUE="$1" PHPBB_INPUT_TRIM="$2" \
+    "$PHP_EXECUTABLE" -r '
+      define("IN_PHPBB", true);
+      $root = getenv("PHPBB_INPUT_ROOT");
+      require $root . "phpbb/request/type_cast_helper_interface.php";
+      require $root . "phpbb/request/type_cast_helper.php";
+      require $root . "includes/utf/utf_tools.php";
+      $helper = new \phpbb\request\type_cast_helper();
+      $helper->set_var($result, getenv("PHPBB_INPUT_VALUE"), "string", true, getenv("PHPBB_INPUT_TRIM") === "trim");
+      echo $result;'
+}
+
+# Login reads the username trimmed and the password untrimmed; the SMTP password
+# is decoded before use and the board name is printed into pages as stored.
+# The database password is read raw by phpBB, so it is left as given.
+ADMIN_NAME=$(phpbb_input "$ADMIN_NAME" trim)
+ADMIN_PASS=$(phpbb_input "$ADMIN_PASS" untrimmed)
+BOARD_NAME=$(phpbb_input "$BOARD_NAME" trim)
+SMTP_PASS=$(phpbb_input "$SMTP_PASS" trim)
+
+# Quote a value as a YAML single-quoted scalar, where the only escape is '' for '
+yaml_quote() {
+  printf "'%s'" "$(printf '%s' "$1" | sed "s/'/''/g")"
+}
 
 # Generate YAML config - more readable format
 cat > "$CONFIG_YML" << EOF
 installer:
     admin:
-        name: "${ADMIN_NAME}"
-        password: "${ADMIN_PASS}"
-        email: "${ADMIN_EMAIL}"
+        name: $(yaml_quote "$ADMIN_NAME")
+        password: $(yaml_quote "$ADMIN_PASS")
+        email: $(yaml_quote "$ADMIN_EMAIL")
 
     board:
-        lang: "${BOARD_LANG}"
-        name: "${BOARD_NAME}"
-        description: "${BOARD_DESC}"
+        lang: $(yaml_quote "$BOARD_LANG")
+        name: $(yaml_quote "$BOARD_NAME")
+        description: $(yaml_quote "$BOARD_DESC")
 
     database:
-        dbms: "${DB_DRIVER}"
-        dbhost: "${DB_HOST}"
-        dbport: "${DB_PORT}"
-        dbuser: "${DB_USER}"
-        dbpasswd: "${DB_PASS}"
-        dbname: "${DB_NAME}"
-        table_prefix: "${TABLE_PREFIX}"
+        dbms: $(yaml_quote "$DB_DRIVER")
+        dbhost: $(yaml_quote "$DB_HOST")
+        dbport: $(yaml_quote "$DB_PORT")
+        dbuser: $(yaml_quote "$DB_USER")
+        dbpasswd: $(yaml_quote "$DB_PASS")
+        dbname: $(yaml_quote "$DB_NAME")
+        table_prefix: $(yaml_quote "$TABLE_PREFIX")
 
     email:
         enabled: ${SMTP_ENABLED}
         smtp_delivery: ${SMTP_DELIVERY}
-        smtp_host: "${SMTP_HOST}"
-        smtp_port: "${SMTP_PORT}"
-        smtp_auth: "${SMTP_AUTH}"
-        smtp_user: "${SMTP_USER}"
-        smtp_pass: "${SMTP_PASS}"
+        smtp_host: $(yaml_quote "$SMTP_HOST")
+        smtp_port: $(yaml_quote "$SMTP_PORT")
+        smtp_auth: $(yaml_quote "$SMTP_AUTH")
+        smtp_user: $(yaml_quote "$SMTP_USER")
+        smtp_pass: $(yaml_quote "$SMTP_PASS")
 
     server:
         cookie_secure: ${COOKIE_SECURE}
-        server_protocol: "${SERVER_PROTOCOL}"
+        server_protocol: $(yaml_quote "$SERVER_PROTOCOL")
         force_server_vars: false
-        server_name: "${SERVER_NAME}"
+        server_name: $(yaml_quote "$SERVER_NAME")
         server_port: ${SERVER_PORT}
-        script_path: "${SCRIPT_PATH}"
+        script_path: $(yaml_quote "$SCRIPT_PATH")
 
     extensions: ['phpbb/viglink']
 EOF
