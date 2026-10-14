@@ -176,6 +176,9 @@ RUN chmod 755 /opt/.docker/*.sh && \
     # Cleanup unnecessary files
     rm -rf /tmp/* /var/cache/apk/*
 
+# Board data must survive container recreation, even when no volume is given
+VOLUME ["/opt/phpbb"]
+
 # Set working directory
 WORKDIR ${PHPBB_ROOT}
 
