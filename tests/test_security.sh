@@ -10,9 +10,14 @@ check "the data on the volume is writable" docker exec "$(c web)" touch "$DATA/f
 
 echo "Blocked paths"
 check_eq "board index loads" 200 "$(http_code web /)"
-for path in /install/ /install/app.php /config.php /.docker-install-version /.change-admin-password; do
+for path in /install/ /install/app.php /config.php /phpbb/session.php /.docker-install-version /.change-admin-password; do
   check_eq "$path is forbidden" 403 "$(http_code web "$path")"
 done
+
+check_eq "phpBB's bundled extension stays reachable" 200 "$(http_code web /ext/phpbb/viglink/styles/all/theme/viglink.css)"
+check_eq "a missing topic answers 404" 404 "$(http_code web '/viewtopic.php?t=99999')"
+check_has "with phpBB's own page, not nginx's" "The requested topic does not exist" \
+  "$(docker exec "$(c web)" curl -s 'http://localhost:8080/viewtopic.php?t=99999')"
 
 # A dotfile that exists answers exactly like one that doesn't, so scanners
 # can't tell boards made by older images from newer ones
