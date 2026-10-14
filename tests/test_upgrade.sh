@@ -55,7 +55,7 @@ echo "Restarts"
 since=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 sleep 1
 docker restart "$(c up1)" >/dev/null
-wait_up up1
+wait_up up1 "$since"
 after=$(docker logs --since "$since" "$(c up1)" 2>&1)
 check_lacks "nothing is merged or migrated again" "Merging" "$after"
 check_eq "no second backup" 1 "$(docker exec "$(c up1)" sh -c 'ls /opt/phpbb/backups | wc -l' | tr -d ' ')"
@@ -64,7 +64,7 @@ docker exec "$(c up1)" rm "$DATA/.change-admin-password"
 since=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 sleep 1
 docker restart "$(c up1)" >/dev/null
-wait_up up1
+wait_up up1 "$since"
 check_lacks "deleting the flag silences the warning" "SECURITY WARNING" "$(docker logs --since "$since" "$(c up1)" 2>&1)"
 check_fails "and the flag is not re-created" in_data up1 "test -e .change-admin-password"
 

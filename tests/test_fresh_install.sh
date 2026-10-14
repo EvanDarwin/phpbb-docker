@@ -38,7 +38,7 @@ echo "Restart"
 since=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 sleep 1
 docker restart "$(c fresh)" >/dev/null
-wait_up fresh
+wait_up fresh "$since"
 after=$(docker logs --since "$since" "$(c fresh)" 2>&1)
 check_lacks "no new password generated or shown" "Password:" "$after"
 check_lacks "installer does not run again" "running YML-based installer" "$after"

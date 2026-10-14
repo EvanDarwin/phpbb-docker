@@ -65,13 +65,17 @@ finish() {
 c() { echo "$T_PREFIX-$1"; }
 vol() { echo "$T_PREFIX-$1"; }
 
-# Wait until the entrypoint reaches nginx, reports an error, or the container exits
+# wait_up NAME [SINCE]: wait until the container exits or its entrypoint reaches
+# nginx (in logs since SINCE, after a restart). A container that does neither
+# within 240 seconds fails and ends the test file.
 wait_up() {
   for _ in $(seq 240); do
-    docker logs "$(c "$1")" 2>&1 | grep -qE 'Starting nginx|ERROR' && { sleep 2; return 0; }
     [ "$(docker inspect -f '{{.State.Status}}' "$(c "$1")" 2>/dev/null)" = exited ] && return 0
+    docker logs ${2:+--since "$2"} "$(c "$1")" 2>&1 | grep -q 'Starting nginx' && { sleep 2; return 0; }
     sleep 1
   done
+  fail "$1 neither started nor exited within 240 seconds"
+  finish
 }
 
 # launch NAME IMAGE [docker run options...]: run detached without waiting
