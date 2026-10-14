@@ -1,16 +1,20 @@
 #!/bin/sh
-# Upgrading MariaDB boards: one made by the last published image is migrated and
-# dumped into the backup; when the dump fails, a files-only backup is still made.
+# MySQL-family boards: one made by the last published image is migrated and dumped
+# into the backup; when the dump fails, a files-only backup is still made; boards
+# whose database is down at boot still start.
 . "$(dirname "$0")/lib.sh"
 
 version=$(image_phpbb_version "$IMAGE")
+old_version=$(image_phpbb_version "$OLD_IMAGE")
 net=$(c net)
 docker network create "$net" >/dev/null
 launch db mariadb:11 --network "$net" -e MARIADB_RANDOM_ROOT_PASSWORD=yes -e MARIADB_DATABASE=phpbb \
   -e MARIADB_USER=phpbb -e MARIADB_PASSWORD=dbpass
-for _ in $(seq 60); do docker exec "$(c db)" healthcheck.sh --connect --innodb_initialized >/dev/null 2>&1 && break; sleep 2; done
+mariadb_up() { docker exec "$(c db)" healthcheck.sh --connect --innodb_initialized >/dev/null 2>&1; }
+for _ in $(seq 60); do mariadb_up && break; sleep 2; done
 root_password=$(logs db | sed -n 's/.*GENERATED ROOT PASSWORD: //p')
-docker exec "$(c db)" mariadb -uroot -p"$root_password" -e "CREATE DATABASE phpbb2; GRANT ALL ON phpbb2.* TO 'phpbb'@'%';"
+docker exec "$(c db)" mariadb -uroot -p"$root_password" -e "CREATE DATABASE phpbb2; GRANT ALL ON phpbb2.* TO 'phpbb'@'%';
+  CREATE DATABASE phpbb3; GRANT ALL ON phpbb3.* TO 'phpbb'@'%';"
 
 board_env() { echo "--network $net -e PHPBB_DATABASE_DRIVER=mysqli -e PHPBB_DATABASE_HOST=$(c db) -e PHPBB_DATABASE_NAME=$1 -e PHPBB_DATABASE_USER=phpbb -e PHPBB_DATABASE_PASSWORD=dbpass"; }
 db_version() { docker exec "$(c db)" mariadb -uphpbb -pdbpass "$1" -N -e "SELECT config_value FROM phpbb_config WHERE config_name='version'"; }
@@ -28,7 +32,7 @@ check_eq "backup includes a database dump" 1 "$(backup_entry_count up1)"
 check_has "the dump is of the database before the upgrade" "'version','$LEGACY_PHPBB_VERSION'" \
   "$(docker exec "$(c up1)" sh -c "unzip -p /opt/phpbb/backups/*.zip database/database.sql | grep -o \"'version','[0-9.]*'\" | head -1")"
 
-echo "MariaDB board from this image at phpBB $(image_phpbb_version "$OLD_IMAGE"), whose database dump fails"
+echo "MariaDB board from this image at phpBB $old_version, whose database dump fails"
 stub=$(mktemp)
 printf '#!/bin/sh\necho "simulated dump failure" >&2\nexit 2\n' > "$stub"
 chmod 755 "$stub"
@@ -43,5 +47,30 @@ check_eq "backup has no database dump" 0 "$(backup_entry_count up2)"
 check "backup of the files was still written" docker exec "$(c up2)" sh -c 'unzip -tq /opt/phpbb/backups/*.zip'
 check_eq "database still upgraded to phpBB $version" "$version" "$(db_version phpbb2)"
 rm -f "$stub"
+
+echo "MariaDB boards whose database is down at boot"
+# shellcheck disable=SC2046
+start old3 "$OLD_IMAGE" -v "$(vol board3):/opt/phpbb" $(board_env phpbb3) -e PHPBB_PASSWORD="$T_PASSWORD"
+docker stop "$(c old3)" "$(c up1)" "$(c up2)" >/dev/null
+docker stop "$(c db)" >/dev/null
+# shellcheck disable=SC2046
+start down1 "$IMAGE" -v "$(vol board1):/opt/phpbb" $(board_env phpbb)
+check "board on phpBB $version: container is running" running down1
+check_has "says why it could not read the version" "Could not read the board's phpBB version from its database" "$(logs down1)"
+check_has "and that the board is up to date" "the board was already up to date with phpBB $version" "$(logs down1)"
+check_eq "web server answers" 200 "$(http_code down1 /styles/prosilver/theme/stylesheet.css)"
+# shellcheck disable=SC2046
+start down3 "$IMAGE" -v "$(vol board3):/opt/phpbb" $(board_env phpbb3)
+check "board on phpBB $old_version: container is running" running down3
+check_has "says the upgrade waits for the database" "this image has phpBB $version, and the board was last set up" "$(logs down3)"
+check_fails "no backup written" docker exec "$(c down3)" test -e /opt/phpbb/backups
+docker stop "$(c down1)" "$(c down3)" >/dev/null
+docker start "$(c db)" >/dev/null
+for _ in $(seq 60); do mariadb_up && break; sleep 2; done
+check_eq "database left at phpBB $old_version" "$old_version" "$(db_version phpbb3)"
+# shellcheck disable=SC2046
+start up3 "$IMAGE" -v "$(vol board3):/opt/phpbb" $(board_env phpbb3)
+check "with the database back, the next boot upgrades" running up3
+check_eq "database upgraded to phpBB $version" "$version" "$(db_version phpbb3)"
 
 finish

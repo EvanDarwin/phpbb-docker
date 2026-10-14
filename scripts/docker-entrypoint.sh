@@ -105,29 +105,34 @@ configure_phpbb() {
   return 0
 }
 
-# Compare the phpBB version recorded in the board's database with the code's,
-# booting phpBB the way bin/phpbbcli.php --safe-mode does. Prints "same",
-# "older:<db version>" or "newer:<db version>".
+# PHP that boots phpBB the way bin/phpbbcli.php --safe-mode does, leaving the
+# board's config.php settings and $phpbb_container set for the code after it
+PHPBB_BOOTSTRAP='
+  define("IN_PHPBB", true);
+  $phpbb_root_path = rtrim(getenv("PHPBB_CODE"), "/") . "/";
+  $phpEx = "php";
+  require($phpbb_root_path . "includes/startup.php");
+  require($phpbb_root_path . "phpbb/class_loader.php");
+  $phpbb_class_loader = new \phpbb\class_loader("phpbb\\", "{$phpbb_root_path}phpbb/", $phpEx);
+  $phpbb_class_loader->register();
+  $phpbb_config_php_file = new \phpbb\config_php_file($phpbb_root_path, $phpEx);
+  extract($phpbb_config_php_file->get_all());
+  @define("PHPBB_ENVIRONMENT", "production");
+  require($phpbb_root_path . "includes/constants.php");
+  require($phpbb_root_path . "includes/functions.php");
+  $phpbb_container_builder = new \phpbb\di\container_builder($phpbb_root_path, $phpEx);
+  $phpbb_container_builder->with_config($phpbb_config_php_file);
+  $phpbb_container_builder->without_extensions();
+  $phpbb_container_builder->without_cache();
+  // phpBB services read the container from this global, as in bin/phpbbcli.php
+  $phpbb_container = $phpbb_container_builder->get_container();
+'
+
+# Compare the phpBB version recorded in the board's database with the code's.
+# Prints "same", "older:<db version>" or "newer:<db version>". The connection
+# attempt is bounded so an unreachable database host can't hold up the boot.
 phpbb_db_version_state() {
-  "php${PHP_VERSION}" -r '
-    define("IN_PHPBB", true);
-    $phpbb_root_path = rtrim(getenv("PHPBB_CODE"), "/") . "/";
-    $phpEx = "php";
-    require($phpbb_root_path . "includes/startup.php");
-    require($phpbb_root_path . "phpbb/class_loader.php");
-    $phpbb_class_loader = new \phpbb\class_loader("phpbb\\", "{$phpbb_root_path}phpbb/", $phpEx);
-    $phpbb_class_loader->register();
-    $phpbb_config_php_file = new \phpbb\config_php_file($phpbb_root_path, $phpEx);
-    extract($phpbb_config_php_file->get_all());
-    @define("PHPBB_ENVIRONMENT", "production");
-    require($phpbb_root_path . "includes/constants.php");
-    require($phpbb_root_path . "includes/functions.php");
-    $phpbb_container_builder = new \phpbb\di\container_builder($phpbb_root_path, $phpEx);
-    $phpbb_container_builder->with_config($phpbb_config_php_file);
-    $phpbb_container_builder->without_extensions();
-    $phpbb_container_builder->without_cache();
-    // phpBB services read the container from this global, as in bin/phpbbcli.php
-    $phpbb_container = $phpbb_container_builder->get_container();
+  PGCONNECT_TIMEOUT=10 "php${PHP_VERSION}" -d default_socket_timeout=10 -r "$PHPBB_BOOTSTRAP"'
     $db_version = $phpbb_container->get("config")["version"];
     $cmp = version_compare($db_version, PHPBB_VERSION);
     echo ($cmp === 0) ? "same" : (($cmp < 0 ? "older:" : "newer:") . $db_version);'
@@ -318,20 +323,43 @@ backup_before_upgrade() {
   return 0
 }
 
+# The board's database couldn't tell its phpBB version: start without upgrading.
+# The merge base says which phpBB the board was last set up for, so the warning
+# can say whether an upgrade is waiting.
+skip_upgrade() {
+  local last
+  last=$(cat "$(merge_base_dir)/VERSION" 2>/dev/null || echo unknown)
+  log "WARNING: $1"
+  if [ "$last" = "$PHPBB_VERSION" ]; then
+    log "         Starting anyway; the board was already up to date with phpBB ${PHPBB_VERSION}."
+  else
+    log "         Starting without upgrading: this image has phpBB ${PHPBB_VERSION}, and the board was last set up"
+    log "         for phpBB $last. Restart the container once the database is reachable to upgrade it."
+  fi
+}
+
 # Bring an existing board up to this image's phpBB version. Every file merge is
 # worked out first; the database is only touched once all of them are clean, then
 # phpBB's official CLI updater migrates it (database only: the code comes from the
-# image), and finally the merged files are written to the volume.
+# image), and finally the merged files are written to the volume. A database that
+# can't be reached never stops the container: the upgrade waits for the next boot.
 upgrade_phpbb() {
   local state needs_db=false needs_files=false stage base from update_dir merge_rc=0 rc=0
   [ "$NEW_INSTALL" = false ] || return 0
 
-  state=$(phpbb_db_version_state) || { log "ERROR: Could not read the board's phpBB version from its database"; return 1; }
+  if ! state=$(phpbb_db_version_state); then
+    skip_upgrade "Could not read the board's phpBB version from its database (error above)."
+    return 0
+  fi
   case "$state" in
+    same) ;;
     older:*) needs_db=true ;;
     newer:*)
       log "ERROR: The database is from phpBB ${state#newer:}, newer than this image's phpBB ${PHPBB_VERSION}. Downgrades are not supported."
       return 1 ;;
+    *)
+      skip_upgrade "Unexpected answer reading the board's phpBB version from its database: $state"
+      return 0 ;;
   esac
   [ "$(cat "$BASE_DIR/VERSION" 2>/dev/null)" = "$PHPBB_VERSION" ] || needs_files=true
   [ "$needs_db" = true ] || [ "$needs_files" = true ] || return 0
@@ -581,7 +609,7 @@ check_database_connectivity() {
       # Try connecting to PostgreSQL with appropriate arguments
       if command -v psql >/dev/null 2>&1; then
         log "Testing PostgreSQL connection to $db_host..."
-        if ! PGPASSWORD="$db_pass" psql -h "$db_host" ${db_port:+-p "$db_port"} -U "$db_user" -d "$db_name" -c "SELECT 1" >/dev/null 2>&1; then
+        if ! PGCONNECT_TIMEOUT=10 PGPASSWORD="$db_pass" psql -h "$db_host" ${db_port:+-p "$db_port"} -U "$db_user" -d "$db_name" -c "SELECT 1" >/dev/null 2>&1; then
           log "WARNING: Could not connect to PostgreSQL server at $db_host. phpBB may not function correctly!"
           result=0  # Don't fail the container, just warn
         else
