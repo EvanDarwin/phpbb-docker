@@ -27,8 +27,11 @@ validate_environment() {
   
   # Generate secure password if not provided
   if [ -z "${PHPBB_PASSWORD:-}" ]; then
-    # Generate a secure random password using /dev/urandom
-    generated_password=$(head -c 16 /dev/urandom | tr -dc 'a-zA-Z0-9!@#$%^&*()-_=+' | head -c 16)
+    # Generate a 12-character password from /dev/urandom, discarding bytes outside
+    # the charset until we have enough. Charset is printable ASCII except " and \
+    # (they break the installer's YAML) and & < > (phpBB's login HTML-escapes them,
+    # but its CLI installer hashes them raw, so the admin could never log in)
+    generated_password=$(tr -dc '\041-\176' < /dev/urandom | tr -d '"\\&<>' | head -c 12)
     export PHPBB_PASSWORD="$generated_password"
     log "SECURITY NOTICE: Generated secure password for admin user: $generated_password"
     log "IMPORTANT: Write down this password now as it will not be shown again!"
