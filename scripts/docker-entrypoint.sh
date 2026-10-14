@@ -43,13 +43,7 @@ validate_environment() {
     done
     export PHPBB_PASSWORD="$GENERATED_PASSWORD"
   fi
-  
-  # Conditionally required variables
-  if [ ! -f "${PHPBB_ROOT:-/opt/phpbb}/phpbb/index.php" ] && [ -z "${PHPBB_VERSION:-}" ]; then
-    log "ERROR: PHPBB_VERSION environment variable is required for initial installation"
-    missing_vars=$((missing_vars + 1))
-  fi
-  
+
   [ $missing_vars -eq 0 ] || return 1
   return 0
 }
@@ -75,22 +69,26 @@ setup_php_version() {
   return 0
 }
 
-# Install phpBB if not already installed
-install_phpbb() {
-  if [ ! -f "${PHPBB_ROOT:-/opt/phpbb}/phpbb/index.php" ]; then
-    log "phpBB files not found at ${PHPBB_ROOT:-/opt/phpbb}/phpbb, running install script..."
-    if ! /opt/.docker/install-phpbb.sh "${PHPBB_VERSION}"; then
-      log "ERROR: Failed to install phpBB. Exiting container."
-      return 1
+# The read-only code in PHPBB_CODE links into this data directory on the volume.
+# A new or bind-mounted volume starts empty, so copy in whatever is missing from
+# the image's pristine copies; volumes from earlier versions already have it all.
+DATA_DIR="${PHPBB_ROOT:-/opt/phpbb}/phpbb"
+prepare_data_dir() {
+  local item
+  mkdir -p "$DATA_DIR"
+  for item in store files images ext styles language config.php; do
+    if [ ! -e "$DATA_DIR/$item" ]; then
+      log "Creating $DATA_DIR/$item"
+      cp -R "$PHPBB_DIST/$item" "$DATA_DIR/$item"
     fi
-  fi
+  done
   return 0
 }
 
 # Configure phpBB if not already configured
 configure_phpbb() {
   # Check if config.php exists and is not empty
-  if [ ! -f "${PHPBB_ROOT:-/opt/phpbb}/phpbb/config.php" ] || [ ! -s "${PHPBB_ROOT:-/opt/phpbb}/phpbb/config.php" ]; then
+  if [ ! -s "$DATA_DIR/config.php" ]; then
     log "Configuration file not found or is empty, running YML-based installer..."
     if ! /opt/.docker/install-from-yml.sh; then
       log "ERROR: Failed to configure phpBB. Exiting container."
@@ -98,17 +96,6 @@ configure_phpbb() {
     fi
   else
     log "phpBB already configured, skipping installation"
-    
-    # Even if installation was skipped, ensure the install directory is removed
-    INSTALL_DIR="${PHPBB_ROOT:-/opt/phpbb}/phpbb/install"
-    if [ -d "$INSTALL_DIR" ]; then
-      log "SECURITY: Removing phpBB install directory..."
-      if rm -rf "$INSTALL_DIR"; then
-        log "SECURITY: Successfully removed phpBB install directory"
-      else
-        log "WARNING: Failed to remove phpBB install directory. This is a security risk!"
-      fi
-    fi
   fi
   return 0
 }
@@ -349,7 +336,7 @@ main() {
   setup_php_version || exit 1
   
   # Install and configure phpBB
-  install_phpbb || exit 1
+  prepare_data_dir || exit 1
   classify_install || exit 1
   configure_phpbb || exit 1
   mark_new_install || exit 1

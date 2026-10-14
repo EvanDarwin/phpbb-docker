@@ -253,7 +253,7 @@ test_db_connection || exit 1
 # if $2 is "trim"). The CLI installer stores values as given, but phpBB expects the
 # stored form of these fields to match what its forms would have stored.
 phpbb_input() {
-  PHPBB_INPUT_ROOT="${PHPBB_ROOT}/phpbb/" PHPBB_INPUT_VALUE="$1" PHPBB_INPUT_TRIM="$2" \
+  PHPBB_INPUT_ROOT="${PHPBB_CODE}/" PHPBB_INPUT_VALUE="$1" PHPBB_INPUT_TRIM="$2" \
     "$PHP_EXECUTABLE" -r '
       define("IN_PHPBB", true);
       $root = getenv("PHPBB_INPUT_ROOT");
@@ -322,7 +322,7 @@ EOF
 chmod 600 "$CONFIG_YML"
 
 # Run installer & cleanup
-cd "${PHPBB_ROOT}/phpbb" || { log "ERROR: Cannot access ${PHPBB_ROOT}/phpbb"; exit 1; }
+cd "$PHPBB_CODE" || { log "ERROR: Cannot access $PHPBB_CODE"; exit 1; }
 [ ! -f "install/phpbbcli.php" ] && log "ERROR: CLI installer missing" && exit 1
 
 $PHP_EXECUTABLE install/phpbbcli.php install "$CONFIG_YML"
@@ -334,12 +334,6 @@ if [ $RESULT -eq 0 ] && [ ! -s "$CONFIG_FILE" ]; then
   log "ERROR: Installation completed but config/config.php is empty or missing"
   log "       This indicates that the installation process failed to write configuration data"
   RESULT=1
-fi
-
-# Only remove install directory if installation was successful
-if [ $RESULT -eq 0 ] && [ -d "install" ]; then
-  rm -rf "install" 
-  log "SECURITY: Removed install dir after successful installation"
 fi
 
 [ -n "${TEMP_DIR:-}" ] && rm -rf "$TEMP_DIR"

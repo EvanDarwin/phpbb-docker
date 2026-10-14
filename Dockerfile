@@ -4,6 +4,8 @@ ARG PHPBB_VERSION
 ENV PHP_VERSION="${PHP_VERSION:-8.4}"
 ENV PHP_VERSION="${PHP_VERSION/./}"
 ENV PHPBB_ROOT="/opt/phpbb"
+ENV PHPBB_CODE="/var/www/phpbb"
+ENV PHPBB_DIST="/usr/share/phpbb-dist"
 ENV PHPBB_VERSION="${PHPBB_VERSION}"
 
 # phpBB configuration environment variables
@@ -108,7 +110,7 @@ RUN sed -i "s/user = nobody/user = phpbb/g" /etc/php${PHP_VERSION}/php-fpm.d/www
     echo "opcache.save_comments=1" >> /etc/php${PHP_VERSION}/conf.d/00_opcache.ini && \
     # Set PHP security configuration
     echo "disable_functions = exec,passthru,shell_exec,system,proc_open,popen,curl_exec,curl_multi_exec,parse_ini_file,show_source,eval" >> /etc/php${PHP_VERSION}/php.ini && \
-    echo "open_basedir = ${PHPBB_ROOT}:/tmp" >> /etc/php${PHP_VERSION}/php.ini && \
+    echo "open_basedir = ${PHPBB_CODE}:${PHPBB_ROOT}:/var/cache/phpbb:/tmp" >> /etc/php${PHP_VERSION}/php.ini && \
     echo "expose_php = Off" >> /etc/php${PHP_VERSION}/php.ini && \
     echo "max_execution_time = 30" >> /etc/php${PHP_VERSION}/php.ini && \
     echo "memory_limit = 128M" >> /etc/php${PHP_VERSION}/php.ini && \
@@ -121,49 +123,38 @@ RUN sed -i "s/user = nobody/user = phpbb/g" /etc/php${PHP_VERSION}/php-fpm.d/www
     chown phpbb:phpbb /run/nginx.pid
 
 # Copy scripts and configurations
-COPY scripts/install-phpbb.sh scripts/docker-entrypoint.sh scripts/install-from-yml.sh /opt/.docker/
+COPY scripts/docker-entrypoint.sh scripts/install-from-yml.sh /opt/.docker/
 COPY config/nginx.conf /etc/nginx/http.d/default.conf
 
-# Download and install phpBB during the build
-RUN if [ -z "${PHPBB_VERSION}" ]; then \
-    echo "ERROR: PHPBB_VERSION build argument is not set" && exit 1; \
-    fi && \
-    echo "Installing phpBB version: ${PHPBB_VERSION}" && \
-    # Extract major.minor version from the full version
-    MAJOR_MINOR_VERSION=$(echo "${PHPBB_VERSION}" | grep -oE '^[0-9]+\.[0-9]+') && \
-    if [ -z "${MAJOR_MINOR_VERSION}" ]; then \
-    echo "ERROR: Could not extract major.minor version from ${PHPBB_VERSION}" && exit 1; \
-    fi && \
-    # Download and extract phpBB
-    DOWNLOAD_URL="https://download.phpbb.com/pub/release/${MAJOR_MINOR_VERSION}/${PHPBB_VERSION}/phpBB-${PHPBB_VERSION}.zip" && \
-    echo "Downloading from: ${DOWNLOAD_URL}" && \
-    cd /tmp && \
-    curl -L -o phpbb.zip "${DOWNLOAD_URL}" && \
-    unzip phpbb.zip && \
-    rm phpbb.zip && \
-    # Move files to destination and set up directories
-    mkdir -p ${PHPBB_ROOT}/phpbb && \
-    mv "phpBB3"/* ${PHPBB_ROOT}/phpbb/ && \
-    rm -rf "phpBB3" && \
-    mkdir -p ${PHPBB_ROOT}/phpbb/config && \
-    touch ${PHPBB_ROOT}/phpbb/config/config.php && \
-    chown -R phpbb:phpbb ${PHPBB_ROOT} && \
-    # Set base permissions
-    chmod -v 0750 ${PHPBB_ROOT} ${PHPBB_ROOT}/phpbb ${PHPBB_ROOT}/phpbb/* && \
-    mkdir -p ${PHPBB_ROOT}/phpbb/images/avatars/uploads && \
-    # Set writable directory permissions
-    chmod -v 0770 ${PHPBB_ROOT}/phpbb/store ${PHPBB_ROOT}/phpbb/cache ${PHPBB_ROOT}/phpbb/files ${PHPBB_ROOT}/phpbb/images/avatars/uploads/ && \
-    chmod 0640 ${PHPBB_ROOT}/phpbb/config/config.php && \
-    # Set subdirectory permissions
-    find ${PHPBB_ROOT}/phpbb/cache -type d -exec chmod 750 {} \; && \
-    find ${PHPBB_ROOT}/phpbb/store -type d -exec chmod 750 {} \; 2>/dev/null || true && \
-    find ${PHPBB_ROOT}/phpbb/files -type d -exec chmod 750 {} \; 2>/dev/null || true && \
-    # Make vendor directory read-only for security
-    if [ -d "${PHPBB_ROOT}/phpbb/vendor" ]; then \
-    chmod -R 555 "${PHPBB_ROOT}/phpbb/vendor" && \
-    echo "SECURITY: Vendor directory is now properly protected (read-only)"; \
-    fi && \
-    echo "phpBB ${PHPBB_VERSION} has been installed successfully!"
+# Install phpBB's code read-only (owned by root) at PHPBB_CODE. Everything a board
+# writes lives on the PHPBB_ROOT volume, in the same layout earlier versions of this
+# image used, and is linked into the code tree. Pristine copies of those files are
+# kept in PHPBB_DIST to populate new volumes. The cache stays in the container.
+RUN set -e; \
+    if [ -z "${PHPBB_VERSION}" ]; then echo "ERROR: PHPBB_VERSION build argument is not set"; exit 1; fi; \
+    MAJOR_MINOR_VERSION=$(echo "${PHPBB_VERSION}" | grep -oE '^[0-9]+\.[0-9]+'); \
+    DOWNLOAD_URL="https://download.phpbb.com/pub/release/${MAJOR_MINOR_VERSION}/${PHPBB_VERSION}/phpBB-${PHPBB_VERSION}.zip"; \
+    echo "Downloading from: ${DOWNLOAD_URL}"; \
+    cd /tmp; \
+    curl -fsSL -o phpbb.zip "${DOWNLOAD_URL}"; \
+    unzip -q phpbb.zip; \
+    rm phpbb.zip; \
+    test -f phpBB3/index.php; \
+    mkdir -p "$(dirname "${PHPBB_CODE}")" "${PHPBB_DIST}"; \
+    mv phpBB3 "${PHPBB_CODE}"; \
+    for item in store files images ext styles language config.php; do mv "${PHPBB_CODE}/$item" "${PHPBB_DIST}/$item"; done; \
+    rm -rf "${PHPBB_CODE}/cache"; \
+    # The board can't remove install/ from read-only code, so phpBB is told to allow it;
+    # nginx denies /install/ instead, leaving the installer reachable only from the CLI
+    printf '\ncore:\n    allow_install_dir: true\n' >> "${PHPBB_CODE}/config/production/config.yml"; \
+    chown -R root:root "${PHPBB_CODE}" "${PHPBB_DIST}"; \
+    chmod -R u=rwX,go=rX "${PHPBB_CODE}" "${PHPBB_DIST}"; \
+    for item in store files images ext styles language config.php; do ln -s "${PHPBB_ROOT}/phpbb/$item" "${PHPBB_CODE}/$item"; done; \
+    ln -s /var/cache/phpbb "${PHPBB_CODE}/cache"; \
+    mkdir -p /var/cache/phpbb "${PHPBB_ROOT}/phpbb"; \
+    chown phpbb:phpbb /var/cache/phpbb "${PHPBB_ROOT}" "${PHPBB_ROOT}/phpbb"; \
+    chmod 750 /var/cache/phpbb; \
+    echo "phpBB ${PHPBB_VERSION} installed at ${PHPBB_CODE}"
 
 # Set proper permissions for the scripts
 RUN chmod 755 /opt/.docker/*.sh && \
