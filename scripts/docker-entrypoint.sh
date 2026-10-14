@@ -17,6 +17,7 @@ GENERATED_PASSWORD=""
 # Validate required environment variables
 validate_environment() {
   local missing_vars=0
+  local escaped_length
 
   # Required variables list - using eval for POSIX-compatible variable indirection
   for var in PHPBB_USERNAME; do
@@ -31,10 +32,15 @@ validate_environment() {
   # board already has one, and a new one would only be logged, never used
   if [ -z "${PHPBB_PASSWORD:-}" ] && [ ! -s "${PHPBB_ROOT:-/opt/phpbb}/phpbb/config.php" ]; then
     # Generate a 12-character password from /dev/urandom, discarding bytes outside
-    # the charset until we have enough. Charset is printable ASCII except " and \
-    # (they break the installer's YAML) and & < > (phpBB's login HTML-escapes them,
-    # but its CLI installer hashes them raw, so the admin could never log in)
-    GENERATED_PASSWORD=$(tr -dc '\041-\176' < /dev/urandom | tr -d '"\\&<>' | head -c 12)
+    # the charset until we have enough. Charset is all printable ASCII: the installer
+    # quotes it safely in its YAML and stores it the way phpBB's login reads it.
+    # phpBB's installer caps the password at 30 characters after HTML-escaping, where
+    # & < > " grow to 4-6 characters, so draw again in the rare case it would not fit
+    while :; do
+      GENERATED_PASSWORD=$(tr -dc '\041-\176' < /dev/urandom | head -c 12)
+      escaped_length=$(printf '%s' "$GENERATED_PASSWORD" | awk '{ n = length($0); n += 4 * gsub(/&/, ""); n += 3 * gsub(/[<>]/, ""); n += 5 * gsub(/"/, ""); print n }')
+      [ "$escaped_length" -le 30 ] && break
+    done
     export PHPBB_PASSWORD="$GENERATED_PASSWORD"
   fi
   
