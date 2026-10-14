@@ -6,6 +6,7 @@ ENV PHP_VERSION="${PHP_VERSION/./}"
 ENV PHPBB_ROOT="/opt/phpbb"
 ENV PHPBB_CODE="/var/www/phpbb"
 ENV PHPBB_DIST="/usr/share/phpbb-dist"
+ENV PHPBB_LEGACY_BASE="/usr/share/phpbb-legacy-base"
 ENV PHPBB_VERSION="${PHPBB_VERSION}"
 
 # phpBB configuration environment variables
@@ -82,6 +83,7 @@ RUN apk update && \
     apk add --no-cache \
     nginx \
     curl \
+    git \
     unzip \
     libcap \
     ca-certificates \
@@ -129,7 +131,11 @@ COPY config/nginx.conf /etc/nginx/http.d/default.conf
 # Install phpBB's code read-only (owned by root) at PHPBB_CODE. Everything a board
 # writes lives on the PHPBB_ROOT volume, in the same layout earlier versions of this
 # image used, and is linked into the code tree. Pristine copies of those files are
-# kept in PHPBB_DIST to populate new volumes. The cache stays in the container.
+# kept in PHPBB_DIST to populate new volumes and to merge phpBB's updated styles,
+# language packs, extensions and images into the volume on upgrade. Every earlier
+# image of this project shipped phpBB 3.3.15, so that release's pristine copies are
+# kept in PHPBB_LEGACY_BASE as the merge base for their volumes. The cache stays in
+# the container.
 RUN set -e; \
     if [ -z "${PHPBB_VERSION}" ]; then echo "ERROR: PHPBB_VERSION build argument is not set"; exit 1; fi; \
     MAJOR_MINOR_VERSION=$(echo "${PHPBB_VERSION}" | grep -oE '^[0-9]+\.[0-9]+'); \
@@ -144,11 +150,22 @@ RUN set -e; \
     mv phpBB3 "${PHPBB_CODE}"; \
     for item in store files images ext styles language config.php; do mv "${PHPBB_CODE}/$item" "${PHPBB_DIST}/$item"; done; \
     rm -rf "${PHPBB_CODE}/cache"; \
+    LEGACY_BASE_VERSION=3.3.15; \
+    mkdir -p "${PHPBB_LEGACY_BASE}"; \
+    if [ "${PHPBB_VERSION}" = "${LEGACY_BASE_VERSION}" ]; then \
+      for dir in styles language ext images; do cp -R "${PHPBB_DIST}/$dir" "${PHPBB_LEGACY_BASE}/$dir"; done; \
+    else \
+      curl -fsSL -o legacy.zip "https://download.phpbb.com/pub/release/3.3/${LEGACY_BASE_VERSION}/phpBB-${LEGACY_BASE_VERSION}.zip"; \
+      unzip -q legacy.zip 'phpBB3/styles/*' 'phpBB3/language/*' 'phpBB3/ext/*' 'phpBB3/images/*'; \
+      for dir in styles language ext images; do mv "phpBB3/$dir" "${PHPBB_LEGACY_BASE}/$dir"; done; \
+      rm -rf legacy.zip phpBB3; \
+    fi; \
+    echo "${LEGACY_BASE_VERSION}" > "${PHPBB_LEGACY_BASE}/VERSION"; \
     # The board can't remove install/ from read-only code, so phpBB is told to allow it;
     # nginx denies /install/ instead, leaving the installer reachable only from the CLI
     printf '\ncore:\n    allow_install_dir: true\n' >> "${PHPBB_CODE}/config/production/config.yml"; \
-    chown -R root:root "${PHPBB_CODE}" "${PHPBB_DIST}"; \
-    chmod -R u=rwX,go=rX "${PHPBB_CODE}" "${PHPBB_DIST}"; \
+    chown -R root:root "${PHPBB_CODE}" "${PHPBB_DIST}" "${PHPBB_LEGACY_BASE}"; \
+    chmod -R u=rwX,go=rX "${PHPBB_CODE}" "${PHPBB_DIST}" "${PHPBB_LEGACY_BASE}"; \
     for item in store files images ext styles language config.php; do ln -s "${PHPBB_ROOT}/phpbb/$item" "${PHPBB_CODE}/$item"; done; \
     ln -s /var/cache/phpbb "${PHPBB_CODE}/cache"; \
     mkdir -p /var/cache/phpbb "${PHPBB_ROOT}/phpbb"; \

@@ -100,6 +100,238 @@ configure_phpbb() {
   return 0
 }
 
+# Compare the phpBB version recorded in the board's database with the code's,
+# booting phpBB the way bin/phpbbcli.php --safe-mode does. Prints "same",
+# "older:<db version>" or "newer:<db version>".
+phpbb_db_version_state() {
+  "php${PHP_VERSION}" -r '
+    define("IN_PHPBB", true);
+    $phpbb_root_path = rtrim(getenv("PHPBB_CODE"), "/") . "/";
+    $phpEx = "php";
+    require($phpbb_root_path . "includes/startup.php");
+    require($phpbb_root_path . "phpbb/class_loader.php");
+    $phpbb_class_loader = new \phpbb\class_loader("phpbb\\", "{$phpbb_root_path}phpbb/", $phpEx);
+    $phpbb_class_loader->register();
+    $phpbb_config_php_file = new \phpbb\config_php_file($phpbb_root_path, $phpEx);
+    extract($phpbb_config_php_file->get_all());
+    @define("PHPBB_ENVIRONMENT", "production");
+    require($phpbb_root_path . "includes/constants.php");
+    require($phpbb_root_path . "includes/functions.php");
+    $phpbb_container_builder = new \phpbb\di\container_builder($phpbb_root_path, $phpEx);
+    $phpbb_container_builder->with_config($phpbb_config_php_file);
+    $phpbb_container_builder->without_extensions();
+    $phpbb_container_builder->without_cache();
+    // phpBB services read the container from this global, as in bin/phpbbcli.php
+    $phpbb_container = $phpbb_container_builder->get_container();
+    $db_version = $phpbb_container->get("config")["version"];
+    $cmp = version_compare($db_version, PHPBB_VERSION);
+    echo ($cmp === 0) ? "same" : (($cmp < 0 ? "older:" : "newer:") . $db_version);'
+}
+
+# Pristine copy of phpBB's bundled styles, language packs, extensions and images
+# for the version the volume's copies came from. It is saved on the volume after
+# every install or upgrade; volumes made by earlier images of this project (all
+# phpBB 3.3.15) have none, so the image keeps that release's copy for them.
+BUNDLED_DIRS="styles language ext images"
+BASE_DIR="$DATA_DIR/.phpbb-dist-base"
+
+merge_base_dir() {
+  if [ -f "$BASE_DIR/VERSION" ]; then echo "$BASE_DIR"; else echo "$PHPBB_LEGACY_BASE"; fi
+}
+
+save_bundled_base() {
+  local dir
+  rm -rf "${BASE_DIR:?}.new"
+  mkdir -p "$BASE_DIR.new"
+  for dir in $BUNDLED_DIRS; do cp -R "$PHPBB_DIST/$dir" "$BASE_DIR.new/$dir"; done
+  echo "$PHPBB_VERSION" > "$BASE_DIR.new/VERSION"
+  rm -rf "${BASE_DIR:?}"
+  mv "$BASE_DIR.new" "$BASE_DIR"
+}
+
+# Three-way merge of the bundled files into a staging directory, changing nothing
+# on the volume: base = merge_base_dir, ours = the volume, theirs = this image.
+# Files the admin didn't change take phpBB's new version, files phpBB didn't change
+# keep the admin's, and files both changed go through git merge-file. Files the
+# admin added are never looked at. Logs every conflict and returns 1 if any.
+stage_bundled_merge() {
+  local base="$1" stage="$2" rel b o t
+  : > "$stage/.deletes"
+  : > "$stage/.conflicts"
+  (cd "$base" && find $BUNDLED_DIRS -type f; cd "$PHPBB_DIST" && find $BUNDLED_DIRS -type f) | sort -u > "$stage/.files"
+
+  while IFS= read -r rel; do
+    b="$base/$rel"; o="$DATA_DIR/$rel"; t="$PHPBB_DIST/$rel"
+    if [ ! -f "$t" ]; then
+      # Removed by phpBB: remove it too, unless the admin changed it
+      if [ -f "$o" ] && [ -f "$b" ] && cmp -s "$o" "$b"; then echo "$rel" >> "$stage/.deletes"; fi
+    elif [ ! -e "$o" ]; then
+      # New in this version, or deleted by the admin (kept deleted unless phpBB changed it)
+      if [ ! -f "$b" ]; then
+        mkdir -p "$(dirname "$stage/$rel")"; cp "$t" "$stage/$rel"
+      elif ! cmp -s "$b" "$t"; then
+        echo "$rel" >> "$stage/.conflicts"
+        log "ERROR: $rel was deleted from the volume but changed in phpBB ${PHPBB_VERSION}"
+      fi
+    elif cmp -s "$o" "$t" || { [ -f "$b" ] && cmp -s "$t" "$b"; }; then
+      :  # already up to date, or unchanged by phpBB: keep the admin's file
+    elif [ -f "$b" ] && cmp -s "$o" "$b"; then
+      mkdir -p "$(dirname "$stage/$rel")"; cp "$t" "$stage/$rel"
+    else
+      mkdir -p "$(dirname "$stage/$rel")"
+      if ! git merge-file -p --diff3 -L "volume" -L "phpBB $(cat "$base/VERSION")" -L "phpBB ${PHPBB_VERSION}" \
+          "$o" "$( [ -f "$b" ] && echo "$b" || echo /dev/null )" "$t" > "$stage/$rel" 2>/dev/null; then
+        echo "$rel" >> "$stage/.conflicts"
+        log "ERROR: $rel was changed on the volume and in phpBB ${PHPBB_VERSION}, and the changes conflict:"
+        awk '/^<<<<<<< /{show=1; printf "  at line %d:\n", NR} show{print "    " $0} /^>>>>>>> /{show=0}' "$stage/$rel" \
+          | while IFS= read -r line; do log "$line"; done
+        rm -f "$stage/$rel"
+      fi
+    fi
+  done < "$stage/.files"
+
+  [ ! -s "$stage/.conflicts" ]
+}
+
+apply_bundled_merge() {
+  local stage="$1" rel
+  (cd "$stage" && find $BUNDLED_DIRS -type f 2>/dev/null) | while IFS= read -r rel; do
+    mkdir -p "$(dirname "$DATA_DIR/$rel")"
+    cp "$stage/$rel" "$DATA_DIR/$rel"
+  done
+  while IFS= read -r rel; do rm -f "${DATA_DIR:?}/$rel"; done < "$stage/.deletes"
+}
+
+# Upgrade backups: everything on the volume, plus a dump of MySQL and PostgreSQL
+# databases, which don't live on the volume
+BACKUP_DIR="${PHPBB_ROOT:-/opt/phpbb}/backups"
+
+# Dump the board's database into $1/database.sql using the connection details in
+# its config.php. Nothing to do for SQLite (its file is on the volume); returns 1
+# if a MySQL or PostgreSQL dump fails.
+dump_database() {
+  local out="$1/database.sql" settings dbms host port name user pass
+  settings=$("php${PHP_VERSION}" -r '
+    include getenv("PHPBB_ROOT") . "/phpbb/config.php";
+    foreach (array($dbms, $dbhost, $dbport, $dbname, $dbuser) as $value) echo $value, "\n";
+    echo base64_encode($dbpasswd), "\n";') || return 1
+  dbms=$(echo "$settings" | sed -n 1p)
+  host=$(echo "$settings" | sed -n 2p)
+  port=$(echo "$settings" | sed -n 3p)
+  name=$(echo "$settings" | sed -n 4p)
+  user=$(echo "$settings" | sed -n 5p)
+  pass=$(echo "$settings" | sed -n 6p | base64 -d)
+  case "$dbms" in
+    *mysqli|*mysql)
+      MYSQL_PWD="$pass" mariadb-dump -h "$host" ${port:+-P "$port"} -u "$user" --single-transaction "$name" > "$out" \
+        || { rm -f "$out"; return 1; } ;;
+    *postgres)
+      PGPASSWORD="$pass" pg_dump -h "$host" ${port:+-p "$port"} -U "$user" "$name" > "$out" \
+        || { rm -f "$out"; return 1; } ;;
+  esac
+  return 0
+}
+
+# Zip everything on the volume (except earlier backups and the saved merge base)
+# and any database dump into $BACKUP_DIR, as the board was before upgrading from $1.
+# A failed database dump still leaves a backup of the files; a failed zip returns 1.
+backup_before_upgrade() {
+  local zip dump_dir
+  zip="$BACKUP_DIR/phpbb-$1-$(date -u +%Y%m%dT%H%M%SZ).zip"
+  mkdir -p "$BACKUP_DIR"
+  dump_dir=$(mktemp -d)
+  if ! dump_database "$dump_dir"; then
+    log "WARNING: Could not dump the database; the backup will contain the files on the volume only"
+  fi
+  if ! BACKUP_ZIP="$zip.partial" BACKUP_DUMPS="$dump_dir" "php${PHP_VERSION}" -r '
+      $root = rtrim(getenv("PHPBB_ROOT"), "/");
+      $skip = array($root . "/backups", $root . "/phpbb/.phpbb-dist-base");
+      $zip = new ZipArchive();
+      if ($zip->open(getenv("BACKUP_ZIP"), ZipArchive::CREATE | ZipArchive::OVERWRITE) !== true) exit(1);
+      $files = new RecursiveIteratorIterator(new RecursiveDirectoryIterator($root, FilesystemIterator::SKIP_DOTS), RecursiveIteratorIterator::SELF_FIRST);
+      foreach ($files as $file) {
+        $path = $file->getPathname();
+        foreach ($skip as $skipped) { if ($path === $skipped || strpos($path, $skipped . "/") === 0) continue 2; }
+        $name = substr($path, strlen($root) + 1);
+        if ($file->isDir()) $zip->addEmptyDir($name); else $zip->addFile($path, $name);
+      }
+      foreach (glob(getenv("BACKUP_DUMPS") . "/*") as $dump) $zip->addFile($dump, "database/" . basename($dump));
+      exit($zip->close() ? 0 : 1);'; then
+    rm -rf "$dump_dir" "$zip.partial"
+    return 1
+  fi
+  mv "$zip.partial" "$zip"
+  rm -rf "$dump_dir"
+  log "Backed up the board to $zip ($(du -h "$zip" | cut -f1))"
+  return 0
+}
+
+# Bring an existing board up to this image's phpBB version. Every file merge is
+# worked out first; the database is only touched once all of them are clean, then
+# phpBB's official CLI updater migrates it (database only: the code comes from the
+# image), and finally the merged files are written to the volume.
+upgrade_phpbb() {
+  local state needs_db=false needs_files=false stage base from update_dir rc=0
+  [ "$NEW_INSTALL" = false ] || return 0
+
+  state=$(phpbb_db_version_state) || { log "ERROR: Could not read the board's phpBB version from its database"; return 1; }
+  case "$state" in
+    older:*) needs_db=true ;;
+    newer:*)
+      log "ERROR: The database is from phpBB ${state#newer:}, newer than this image's phpBB ${PHPBB_VERSION}. Downgrades are not supported."
+      return 1 ;;
+  esac
+  [ "$(cat "$BASE_DIR/VERSION" 2>/dev/null)" = "$PHPBB_VERSION" ] || needs_files=true
+  [ "$needs_db" = true ] || [ "$needs_files" = true ] || return 0
+
+  stage=$(mktemp -d)
+  if [ "$needs_files" = true ]; then
+    base=$(merge_base_dir)
+    log "Merging phpBB's bundled styles, language packs, extensions and images from $(cat "$base/VERSION") to ${PHPBB_VERSION}..."
+    if ! stage_bundled_merge "$base" "$stage"; then
+      rm -rf "$stage"
+      log "ERROR: Upgrade to phpBB ${PHPBB_VERSION} stopped before changing anything. Resolve the conflicts above in"
+      log "       $DATA_DIR (or restore phpBB's original file there), then restart the container."
+      return 1
+    fi
+  fi
+
+  # Back up before the first change, if anything is going to change at all
+  if [ "$needs_db" = true ] || [ -s "$stage/.deletes" ] \
+      || [ -n "$(cd "$stage" && find $BUNDLED_DIRS -type f 2>/dev/null | head -n 1)" ]; then
+    from=${state#older:}
+    [ "$needs_db" = true ] || from=$(cat "$(merge_base_dir)/VERSION")
+    if ! backup_before_upgrade "$from"; then
+      rm -rf "$stage"
+      log "ERROR: Upgrade to phpBB ${PHPBB_VERSION} stopped before changing anything: the backup could not be written"
+      return 1
+    fi
+  fi
+
+  if [ "$needs_db" = true ]; then
+    log "Updating the database from phpBB ${state#older:} to ${PHPBB_VERSION}..."
+    update_dir=$(mktemp -d)
+    printf 'updater:\n    type: db_only\n' > "$update_dir/update-config.yml"
+    (cd "$PHPBB_CODE" && "php${PHP_VERSION}" install/phpbbcli.php update "$update_dir/update-config.yml") || rc=$?
+    rm -rf "$update_dir"
+    # phpbbcli.php can exit 0 after a failed step, so confirm against the database
+    state=$(phpbb_db_version_state) || state=unknown
+    if [ "$rc" -ne 0 ] || [ "$state" != same ]; then
+      rm -rf "$stage"
+      log "ERROR: The phpBB database update did not complete (exit $rc, database now: $state)"
+      return 1
+    fi
+  fi
+
+  if [ "$needs_files" = true ]; then
+    apply_bundled_merge "$stage"
+    save_bundled_base
+  fi
+  rm -rf "$stage"
+  log "Board is up to date with phpBB ${PHPBB_VERSION}"
+  return 0
+}
+
 # Install version marker: 1 = installed by an image from before the password
 # generator fix (it could create admin passwords as short as 6 characters),
 # 2 = installed by this image. The marker and the warning flag sit next to
@@ -338,8 +570,10 @@ main() {
   # Install and configure phpBB
   prepare_data_dir || exit 1
   classify_install || exit 1
+  upgrade_phpbb || exit 1
   configure_phpbb || exit 1
   mark_new_install || exit 1
+  if [ "$NEW_INSTALL" = true ]; then save_bundled_base || exit 1; fi
   show_generated_password || exit 1
   apply_custom_php_ini || exit 1
   
