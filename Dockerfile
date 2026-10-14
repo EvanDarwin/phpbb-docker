@@ -1,4 +1,4 @@
-FROM alpine:edge
+FROM alpine:3.24
 
 ARG PHPBB_VERSION
 ENV PHP_VERSION="${PHP_VERSION:-8.4}"
