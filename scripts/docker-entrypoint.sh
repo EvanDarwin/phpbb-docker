@@ -586,17 +586,19 @@ check_database_connectivity() {
         return 0
       fi
       
-      # Try connecting to MySQL with appropriate arguments
-      if command -v mysql >/dev/null 2>&1; then
-        log "Testing MySQL connection to $db_host..."
-        if ! mysql -h "$db_host" ${db_port:+-P "$db_port"} -u "$db_user" ${db_pass:+-p"$db_pass"} -e "SELECT 1" >/dev/null 2>&1; then
-          log "WARNING: Could not connect to MySQL server at $db_host. phpBB may not function correctly!"
-          result=0  # Don't fail the container, just warn
-        else
-          log "MySQL connectivity test successful"
-        fi
+      # Connect with PHP's mysqli, as phpBB does; the connection attempt is bounded
+      log "Testing MySQL connection to $db_host..."
+      if ! DB_HOST="$db_host" DB_PORT="$db_port" DB_USER="$db_user" DB_PASS="$db_pass" \
+          "php${PHP_VERSION}" -d default_socket_timeout=10 -r '
+            mysqli_report(MYSQLI_REPORT_OFF);
+            if (!@mysqli_init()->real_connect(getenv("DB_HOST"), getenv("DB_USER"), getenv("DB_PASS"), null, (int) getenv("DB_PORT") ?: null)) {
+              fwrite(STDERR, mysqli_connect_error() . "\n");
+              exit(1);
+            }'; then
+        log "WARNING: Could not connect to MySQL server at $db_host. phpBB may not function correctly!"
+        result=0  # Don't fail the container, just warn
       else
-        log "WARNING: MySQL client not available, skipping connectivity check"
+        log "MySQL connectivity test successful"
       fi
       ;;
       

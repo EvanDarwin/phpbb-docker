@@ -87,6 +87,7 @@ test_db_connection() {
   local pass="${PHPBB_DATABASE_PASSWORD:-${PHPBB_DATABASE_PASS:-}}"
   local name="${PHPBB_DATABASE_NAME:-phpbb}"
   local db_path="${PHPBB_DATABASE_SQLITE_PATH:-/phpbb.sqlite}"
+  local db_state
   
   log "Testing database connection with driver: $driver"
   
@@ -95,22 +96,26 @@ test_db_connection() {
       # Set default MySQL port if not specified
       [ -z "$port" ] && port="3306"
       
-      if command -v mysql > /dev/null 2>&1; then
-        log "Testing MySQL connection to $host:$port..."
-        if ! mysql -h "$host" -P "$port" -u "$user" ${pass:+-p"$pass"} -e "SELECT 1" > /dev/null 2>&1; then
-          log "ERROR: Failed to connect to MySQL database"
-          return 1
-        fi
-        
-        # Test if database exists or we can create it
-        if ! mysql -h "$host" -P "$port" -u "$user" ${pass:+-p"$pass"} -e "USE \`$name\`" > /dev/null 2>&1; then
-          log "Database '$name' doesn't exist, will be created during installation"
-        fi
-        
-        log "MySQL connection successful"
-      else
-        log "WARNING: mysql client not found, skipping connection test"
+      # Connect with PHP's mysqli, as phpBB does, and check whether the database exists
+      log "Testing MySQL connection to $host:$port..."
+      if ! db_state=$(DB_HOST="$host" DB_PORT="$port" DB_USER="$user" DB_PASS="$pass" DB_NAME="$name" \
+          "$PHP_EXECUTABLE" -d default_socket_timeout=10 -r '
+            mysqli_report(MYSQLI_REPORT_OFF);
+            $db = mysqli_init();
+            if (!@$db->real_connect(getenv("DB_HOST"), getenv("DB_USER"), getenv("DB_PASS"), null, (int) getenv("DB_PORT"))) {
+              fwrite(STDERR, mysqli_connect_error() . "\n");
+              exit(1);
+            }
+            echo @$db->select_db(getenv("DB_NAME")) ? "exists" : "missing";'); then
+        log "ERROR: Failed to connect to MySQL database"
+        return 1
       fi
+
+      if [ "$db_state" = missing ]; then
+        log "Database '$name' doesn't exist, will be created during installation"
+      fi
+
+      log "MySQL connection successful"
       ;;
       
     postgres)

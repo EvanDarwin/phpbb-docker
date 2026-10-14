@@ -1,7 +1,7 @@
 #!/bin/sh
 # MySQL-family boards: one made by the last published image is migrated and dumped
 # into the backup; when the dump fails, a files-only backup is still made; boards
-# whose database is down at boot still start.
+# whose database is down at boot still start; MySQL 8.0 boards install and upgrade.
 . "$(dirname "$0")/lib.sh"
 
 version=$(image_phpbb_version "$IMAGE")
@@ -10,14 +10,18 @@ net=$(c net)
 docker network create "$net" >/dev/null
 launch db mariadb:11 --network "$net" -e MARIADB_RANDOM_ROOT_PASSWORD=yes -e MARIADB_DATABASE=phpbb \
   -e MARIADB_USER=phpbb -e MARIADB_PASSWORD=dbpass
+launch mysql8 mysql:8.0 --network "$net" -e MYSQL_RANDOM_ROOT_PASSWORD=yes -e MYSQL_DATABASE=phpbb \
+  -e MYSQL_USER=phpbb -e MYSQL_PASSWORD=dbpass
 mariadb_up() { docker exec "$(c db)" healthcheck.sh --connect --innodb_initialized >/dev/null 2>&1; }
 for _ in $(seq 60); do mariadb_up && break; sleep 2; done
 root_password=$(logs db | sed -n 's/.*GENERATED ROOT PASSWORD: //p')
 docker exec "$(c db)" mariadb -uroot -p"$root_password" -e "CREATE DATABASE phpbb2; GRANT ALL ON phpbb2.* TO 'phpbb'@'%';
   CREATE DATABASE phpbb3; GRANT ALL ON phpbb3.* TO 'phpbb'@'%';"
 
-board_env() { echo "--network $net -e PHPBB_DATABASE_DRIVER=mysqli -e PHPBB_DATABASE_HOST=$(c db) -e PHPBB_DATABASE_NAME=$1 -e PHPBB_DATABASE_USER=phpbb -e PHPBB_DATABASE_PASSWORD=dbpass"; }
+# board_env DATABASE [DB CONTAINER]
+board_env() { echo "--network $net -e PHPBB_DATABASE_DRIVER=mysqli -e PHPBB_DATABASE_HOST=$(c "${2:-db}") -e PHPBB_DATABASE_NAME=$1 -e PHPBB_DATABASE_USER=phpbb -e PHPBB_DATABASE_PASSWORD=dbpass"; }
 db_version() { docker exec "$(c db)" mariadb -uphpbb -pdbpass "$1" -N -e "SELECT config_value FROM phpbb_config WHERE config_name='version'"; }
+mysql8_version() { docker exec "$(c mysql8)" mysql -uphpbb -pdbpass phpbb -N -e "SELECT config_value FROM phpbb_config WHERE config_name='version'" 2>/dev/null; }
 backup_entry_count() { docker exec "$(c "$1")" sh -c "unzip -l /opt/phpbb/backups/*.zip | grep -c ' database/database.sql\$'"; }
 
 echo "MariaDB board from the last published image (phpBB $LEGACY_PHPBB_VERSION)"
@@ -72,5 +76,20 @@ check_eq "database left at phpBB $old_version" "$old_version" "$(db_version phpb
 start up3 "$IMAGE" -v "$(vol board3):/opt/phpbb" $(board_env phpbb3)
 check "with the database back, the next boot upgrades" running up3
 check_eq "database upgraded to phpBB $version" "$version" "$(db_version phpbb3)"
+
+echo "MySQL 8.0 board from this image at phpBB $old_version"
+# The image's first start runs a temporary server without networking, so wait for TCP
+for _ in $(seq 90); do docker exec "$(c mysql8)" mysql -h127.0.0.1 -uphpbb -pdbpass -e 'SELECT 1' phpbb >/dev/null 2>&1 && break; sleep 2; done
+# shellcheck disable=SC2046
+start old4 "$OLD_IMAGE" -v "$(vol board4):/opt/phpbb" $(board_env phpbb mysql8) -e PHPBB_PASSWORD="$T_PASSWORD"
+check "installs" running old4
+check_eq "installed phpBB $old_version" "$old_version" "$(mysql8_version)"
+docker stop "$(c old4)" >/dev/null
+# shellcheck disable=SC2046
+start up4 "$IMAGE" -v "$(vol board4):/opt/phpbb" $(board_env phpbb mysql8)
+check "upgraded container is running" running up4
+check_eq "database upgraded to phpBB $version" "$version" "$(mysql8_version)"
+check_eq "admin logs in" 2 "$(login up4 admin "$T_PASSWORD")"
+check_lacks "no false connection warning" "Could not connect to MySQL server" "$(logs up4)"
 
 finish
