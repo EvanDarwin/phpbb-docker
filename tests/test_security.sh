@@ -19,6 +19,14 @@ check_eq "a missing topic answers 404" 404 "$(http_code web '/viewtopic.php?t=99
 check_has "with phpBB's own page, not nginx's" "The requested topic does not exist" \
   "$(docker exec "$(c web)" curl -s 'http://localhost:8080/viewtopic.php?t=99999')"
 
+headers() { docker exec "$(c web)" curl -s -o /dev/null -D - "http://localhost:8080$1" | tr -d '\r'; }
+check_has "static files get the security headers" "X-Content-Type-Options: nosniff" \
+  "$(headers /styles/prosilver/theme/stylesheet.css)"
+check_eq "pages send phpBB's Referrer-Policy, once" 1 "$(headers / | grep -ci '^referrer-policy:')"
+check_has "static files get a Referrer-Policy" "Referrer-Policy: strict-origin-when-cross-origin" \
+  "$(headers /styles/prosilver/theme/stylesheet.css)"
+check_has "so do nginx's own error pages" "Referrer-Policy: strict-origin-when-cross-origin" "$(headers /config.php)"
+
 # A dotfile that exists answers exactly like one that doesn't, so scanners
 # can't tell boards made by older images from newer ones
 response() { docker exec "$(c web)" curl -s -D - "http://localhost:8080$1" | grep -vi '^date:'; }
