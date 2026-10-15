@@ -34,6 +34,7 @@ check_has "so do nginx's own error pages" "Referrer-Policy: strict-origin-when-c
 check_has "the CSP allows images, video and frames from any HTTPS site" \
   "img-src 'self' data: https:; media-src 'self' https:; frame-src 'self' https:" "$(headers /)"
 check_has "static files get the CSP too" "Content-Security-Policy: default-src 'self'" "$(headers /styles/prosilver/theme/stylesheet.css)"
+check_lacks "no Cross-Origin-Embedder-Policy" "Cross-Origin-Embedder-Policy" "$(headers /)"
 
 # A dotfile that exists answers exactly like one that doesn't, so scanners
 # can't tell boards made by older images from newer ones
