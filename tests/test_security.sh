@@ -88,6 +88,8 @@ start bigpost "$IMAGE" -e PHPBB_PASSWORD="$T_PASSWORD" -v "$ini:/etc/php84/conf.
 check_eq "raising post_max_size raises nginx's limit" "client_max_body_size 67108864;" \
   "$(docker exec "$(c bigpost)" cat /run/nginx/client-max-body-size.conf)"
 rm -f "$ini"
+check_has "PHP-FPM confines PHP to the board with open_basedir from php.ini" "/var/www/phpbb:/opt/phpbb:/var/cache/phpbb:/tmp" \
+  "$(docker exec "$(c web)" php-fpm84 -i | grep '^open_basedir')"
 
 echo "Logs"
 docker exec "$(c web)" curl -s -o /dev/null http://127.0.0.1:8080/log-probe
