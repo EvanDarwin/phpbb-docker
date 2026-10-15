@@ -526,6 +526,51 @@ apply_custom_php_ini() {
   return 0
 }
 
+# nginx trusts X-Forwarded-For only from TRUSTED_PROXIES: addresses or ranges,
+# separated by spaces or commas, and "cloudflare" for Cloudflare's published ranges.
+# Empty, the default, trusts nothing.
+TRUSTED_PROXIES_CONF=/run/nginx/trusted-proxies.conf
+CLOUDFLARE_IPS=/run/nginx/cloudflare-ips
+configure_trusted_proxies() {
+  local entry ranges=""
+  for entry in $(echo "${TRUSTED_PROXIES:-}" | tr ',' ' '); do
+    case "$entry" in
+      cloudflare)
+        cloudflare_ips || return 1
+        ranges="$ranges $(cat "$CLOUDFLARE_IPS")" ;;
+      *)
+        if ! echo "$entry" | grep -qE '^([0-9]{1,3}\.){3}[0-9]{1,3}(/[0-9]{1,2})?$|^[0-9a-fA-F:]*:[0-9a-fA-F:]*(/[0-9]{1,3})?$'; then
+          log "ERROR: TRUSTED_PROXIES: '$entry' is not an address, an address range or 'cloudflare'"
+          return 1
+        fi
+        ranges="$ranges $entry" ;;
+    esac
+  done
+  if ! for entry in $ranges; do echo "set_real_ip_from $entry;"; done > "$TRUSTED_PROXIES_CONF"; then
+    log "ERROR: Could not write $TRUSTED_PROXIES_CONF"
+    return 1
+  fi
+  # shellcheck disable=SC2086
+  [ -z "$ranges" ] || log "Trusting X-Forwarded-For from $(set -- $ranges; echo $#) address ranges"
+  return 0
+}
+
+# Cloudflare's ranges, as fetched when the image was built, and fetched again at
+# boot once the copy is over a month old. A failed fetch keeps the copy.
+cloudflare_ips() {
+  if [ ! -f "$CLOUDFLARE_IPS" ] && ! { cp /usr/share/phpbb-docker/cloudflare-ips "$CLOUDFLARE_IPS" \
+      && touch -r /usr/share/phpbb-docker/cloudflare-ips "$CLOUDFLARE_IPS"; }; then
+    log "ERROR: Could not copy Cloudflare's IP ranges to $CLOUDFLARE_IPS"
+    return 1
+  fi
+  if [ -n "$(find "$CLOUDFLARE_IPS" -mmin +43200)" ]; then
+    log "Fetching Cloudflare's IP ranges, as the copy from $(date -r "$CLOUDFLARE_IPS" +%Y-%m-%d) is over a month old..."
+    /opt/.docker/update-cloudflare-ips.sh "$CLOUDFLARE_IPS" \
+      || log "WARNING: Could not fetch Cloudflare's IP ranges; using the copy from $(date -r "$CLOUDFLARE_IPS" +%Y-%m-%d)"
+  fi
+  return 0
+}
+
 # Setup log forwarding to Docker logs more efficiently
 setup_log_forwarding() {
   local LOG_DIR="/tmp/docker-logs"
@@ -689,6 +734,7 @@ main() {
   check_database_connectivity || exit 1
   
   # Setup logging and start services
+  configure_trusted_proxies || exit 1
   setup_log_forwarding || exit 1
   start_php_fpm || exit 1
   warn_vulnerable_install || exit 1

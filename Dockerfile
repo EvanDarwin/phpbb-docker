@@ -35,6 +35,7 @@ ENV PHPBB_FORUM_NAME="My phpBB Forum" \
     SERVER_PORT="8080" \
     SCRIPT_PATH="/" \
     COOKIE_SECURE="false" \
+    TRUSTED_PROXIES="" \
     PHP_MEMORY_LIMIT="128M" \
     PHP_CUSTOM_INI=""
 
@@ -125,7 +126,7 @@ RUN sed -i "s/user = nobody/user = phpbb/g" /etc/php${PHP_VERSION}/php-fpm.d/www
     chown phpbb:phpbb /run/nginx.pid
 
 # Copy scripts and configurations
-COPY scripts/docker-entrypoint.sh scripts/install-from-yml.sh /opt/.docker/
+COPY scripts/docker-entrypoint.sh scripts/install-from-yml.sh scripts/update-cloudflare-ips.sh /opt/.docker/
 COPY config/nginx.conf /etc/nginx/http.d/default.conf
 
 # Install phpBB's code read-only (owned by root) at PHPBB_CODE. Everything a board
@@ -177,6 +178,9 @@ RUN set -e; \
 RUN chmod 755 /opt/.docker/*.sh && \
     chown -R root:phpbb /opt/.docker && \
     chmod 750 /opt/.docker && \
+    # Cloudflare's IP ranges for TRUSTED_PROXIES=cloudflare, refreshed at boot when stale
+    mkdir -p /usr/share/phpbb-docker && \
+    /opt/.docker/update-cloudflare-ips.sh /usr/share/phpbb-docker/cloudflare-ips && \
     # Create SQLite database file with proper permissions
     touch ${PHPBB_ROOT}/phpbb.sqlite && \
     chown phpbb:phpbb ${PHPBB_ROOT}/phpbb.sqlite && \
