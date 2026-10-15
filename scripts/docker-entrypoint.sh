@@ -555,6 +555,27 @@ configure_trusted_proxies() {
   return 0
 }
 
+# The Content-Security-Policy header: CONTENT_SECURITY_POLICY replaces the default.
+# Images, video and frames may come from any HTTPS site, for [img] BBCode, remote
+# avatars and embed extensions.
+DEFAULT_CSP="default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; media-src 'self' https:; frame-src 'self' https:; font-src 'self'; frame-ancestors 'self'; form-action 'self'"
+configure_csp() {
+  local csp="${CONTENT_SECURITY_POLICY:-$DEFAULT_CSP}"
+  # The value goes into nginx's configuration inside double quotes
+  case "$csp" in
+    *[\"\\\$]*|*"
+"*)
+      log "ERROR: CONTENT_SECURITY_POLICY can't contain double quotes, backslashes, \$ or line breaks"
+      return 1 ;;
+  esac
+  if ! echo "add_header Content-Security-Policy \"$csp\" always;" > /run/nginx/content-security-policy.conf; then
+    log "ERROR: Could not write /run/nginx/content-security-policy.conf"
+    return 1
+  fi
+  [ -z "${CONTENT_SECURITY_POLICY:-}" ] || log "Using the Content-Security-Policy from CONTENT_SECURITY_POLICY"
+  return 0
+}
+
 # Cloudflare's ranges, as fetched when the image was built, and fetched again at
 # boot once the copy is over a month old. A failed fetch keeps the copy.
 cloudflare_ips() {
@@ -739,6 +760,7 @@ main() {
   
   # Setup logging and start services
   configure_trusted_proxies || exit 1
+  configure_csp || exit 1
   setup_log_forwarding || exit 1
   start_php_fpm || exit 1
   warn_vulnerable_install || exit 1
