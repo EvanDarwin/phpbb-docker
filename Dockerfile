@@ -102,6 +102,12 @@ RUN sed -i "s/user = nobody/user = phpbb/g" /etc/php${PHP_VERSION}/php-fpm.d/www
     echo "ping.path = /fpm-ping" >> /etc/php${PHP_VERSION}/php-fpm.d/www.conf && \
     sed -i "s|^listen = 127.0.0.1:9000$|listen = /run/php-fpm/php-fpm.sock|" /etc/php${PHP_VERSION}/php-fpm.d/www.conf && \
     grep -q "^listen = /run/php-fpm/php-fpm.sock$" /etc/php${PHP_VERSION}/php-fpm.d/www.conf && \
+    # Logs go to links the entrypoint points at /var/log/phpbb, or at the container's
+    # output when that can't be written
+    sed -i "s|^;error_log = log/php${PHP_VERSION}/error.log$|error_log = /run/php-fpm/error.log|" /etc/php${PHP_VERSION}/php-fpm.conf && \
+    grep -q "^error_log = /run/php-fpm/error.log$" /etc/php${PHP_VERSION}/php-fpm.conf && \
+    sed -i "s|/var/log/nginx/error.log|/run/nginx/error.log|; s|/var/log/nginx/access.log|/run/nginx/access.log|" /etc/nginx/nginx.conf && \
+    ! grep -q "/var/log/nginx/" /etc/nginx/nginx.conf && \
     # Optimize PHP with opcache for better performance
     echo "opcache.memory_consumption=128" >> /etc/php${PHP_VERSION}/conf.d/00_opcache.ini && \
     echo "opcache.interned_strings_buffer=8" >> /etc/php${PHP_VERSION}/conf.d/00_opcache.ini && \
@@ -120,8 +126,8 @@ RUN sed -i "s/user = nobody/user = phpbb/g" /etc/php${PHP_VERSION}/php-fpm.d/www
     echo "post_max_size = 32M" >> /etc/php${PHP_VERSION}/php.ini && \
     echo "upload_max_filesize = 24M" >> /etc/php${PHP_VERSION}/php.ini && \
     # Create necessary directories with proper permissions
-    mkdir -p /var/lib/nginx /var/log/nginx /var/log/php${PHP_VERSION} /run/nginx /run/php-fpm && \
-    chown -R phpbb:phpbb /var/lib/nginx /var/log/nginx /var/log/php${PHP_VERSION} /run/nginx /run/php-fpm && \
+    mkdir -p /var/lib/nginx /var/log/nginx /var/log/phpbb /run/nginx /run/php-fpm && \
+    chown -R phpbb:phpbb /var/lib/nginx /var/log/nginx /var/log/phpbb /run/nginx /run/php-fpm && \
     touch /run/nginx.pid && \
     chown phpbb:phpbb /run/nginx.pid
 

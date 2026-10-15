@@ -14,7 +14,7 @@ client_addr() {
   else
     docker exec "$(c "$1")" curl -s -o /dev/null -H 'X-Forwarded-For: 203.0.113.9' "http://127.0.0.1:8080$path"
   fi
-  docker exec "$(c "$1")" sh -c "grep ' $path ' /var/log/nginx/access.log | cut -d ' ' -f 1"
+  docker exec "$(c "$1")" sh -c "grep ' $path ' /var/log/phpbb/nginx-access.log | cut -d ' ' -f 1"
 }
 trusted() { docker exec "$(c "$1")" cat /run/nginx/trusted-proxies.conf; }
 # backdate NAME FILE DAYS

@@ -571,20 +571,33 @@ cloudflare_ips() {
   return 0
 }
 
-# nginx and PHP-FPM log to files; forward new lines to the container's log, each
-# prefixed with its source. awk flushes each line, where sed would hold them in its
-# buffer until it filled.
+# nginx and PHP-FPM log to links in /run that point at files in LOG_DIR, which can
+# be mounted on its own; new lines are also forwarded to the container's output,
+# each prefixed with its source (awk flushes each line, where sed would hold them
+# in its buffer). If LOG_DIR can't be written, the links point at the container's
+# output instead.
+LOG_DIR=/var/log/phpbb
 setup_log_forwarding() {
-  mkdir -p "/var/log/nginx" "/var/log/php${PHP_VERSION}"
-  touch "/var/log/nginx/access.log" "/var/log/nginx/error.log" "/var/log/php${PHP_VERSION}/error.log"
-
-  log "Setting up log forwarding..."
-  {
-    tail -F "/var/log/nginx/access.log" | awk '{ print "[nginx:access] " $0; fflush() }' &
-    tail -F "/var/log/nginx/error.log" | awk '{ print "[nginx:error] " $0; fflush() }' &
-    tail -F "/var/log/php${PHP_VERSION}/error.log" | awk '{ print "[php:error] " $0; fflush() }' &
-  } >> /dev/stderr &
-
+  if mkdir -p "$LOG_DIR" 2>/dev/null \
+      && touch "$LOG_DIR/nginx-access.log" "$LOG_DIR/nginx-error.log" "$LOG_DIR/php-error.log" 2>/dev/null; then
+    ln -sf "$LOG_DIR/nginx-access.log" /run/nginx/access.log \
+      && ln -sf "$LOG_DIR/nginx-error.log" /run/nginx/error.log \
+      && ln -sf "$LOG_DIR/php-error.log" /run/php-fpm/error.log \
+      || { log "ERROR: Could not link the log files in /run"; return 1; }
+    log "Logging to $LOG_DIR..."
+    {
+      tail -F "$LOG_DIR/nginx-access.log" | awk '{ print "[nginx:access] " $0; fflush() }' &
+      tail -F "$LOG_DIR/nginx-error.log" | awk '{ print "[nginx:error] " $0; fflush() }' &
+      tail -F "$LOG_DIR/php-error.log" | awk '{ print "[php:error] " $0; fflush() }' &
+    } >> /dev/stderr &
+  else
+    log "WARNING: Could not write the logs in $LOG_DIR (a mounted directory must be writable by"
+    log "         UID 100); logging to the container output only"
+    ln -sf /dev/stdout /run/nginx/access.log \
+      && ln -sf /dev/stderr /run/nginx/error.log \
+      && ln -sf /dev/stderr /run/php-fpm/error.log \
+      || { log "ERROR: Could not link the logs to the container output"; return 1; }
+  fi
   return 0
 }
 

@@ -47,6 +47,20 @@ echo "Logs"
 docker exec "$(c web)" curl -s -o /dev/null http://127.0.0.1:8080/log-probe
 sleep 2
 check_has "access log lines reach the container log right away" "[nginx:access] 127.0.0.1 - - " "$(logs web | grep ' /log-probe ')"
+check_eq "every log is in /var/log/phpbb" "nginx-access.log nginx-error.log php-error.log" "$(docker exec "$(c web)" ls /var/log/phpbb | tr '\n' ' ' | sed 's/ $//')"
+check "the access log has the request" docker exec "$(c web)" grep -q ' /log-probe ' /var/log/phpbb/nginx-access.log
+check "PHP-FPM's log is written" docker exec "$(c web)" test -s /var/log/phpbb/php-error.log
+check_lacks "nothing else logs to /var/log" "access.log" "$(docker exec "$(c web)" sh -c 'find /var/log -type f ! -path "/var/log/phpbb/*"')"
+start mounted "$IMAGE" -e PHPBB_PASSWORD="$T_PASSWORD" -v "$(vol logs):/var/log/phpbb"
+docker exec "$(c mounted)" curl -s -o /dev/null http://127.0.0.1:8080/log-probe
+check "a volume mounted there gets the logs" docker run --rm -v "$(vol logs):/logs" --entrypoint grep "$IMAGE" -q ' /log-probe ' /logs/nginx-access.log
+start rologs "$IMAGE" -e PHPBB_PASSWORD="$T_PASSWORD" -v "$(vol rologs):/var/log/phpbb:ro"
+check "a read-only mount there doesn't stop the container" running rologs
+check_has "it warns" "Could not write the logs in /var/log/phpbb" "$(logs rologs)"
+docker exec "$(c rologs)" curl -s -o /dev/null http://127.0.0.1:8080/log-probe
+sleep 1
+check_has "and logs to the container output instead" '"GET /log-probe HTTP' "$(logs rologs)"
+check "the health check passes" healthy rologs
 
 echo "Base image"
 check_has "PHP 8.4" "PHP 8.4." "$(docker exec "$(c web)" php84 -v | head -1)"
