@@ -43,6 +43,11 @@ check_lacks "PHP-FPM's ping isn't served on the public port" "pong" "$(docker ex
 check_eq "nothing listens on TCP but nginx on 8080" "0.0.0.0:8080 :::8080" \
   "$(docker exec "$(c web)" netstat -ltn | awk '$1 ~ /^tcp/ {print $4}' | sort | tr '\n' ' ' | sed 's/ $//')"
 
+echo "Logs"
+docker exec "$(c web)" curl -s -o /dev/null http://127.0.0.1:8080/log-probe
+sleep 2
+check_has "access log lines reach the container log right away" "[nginx:access] 127.0.0.1 - - " "$(logs web | grep ' /log-probe ')"
+
 echo "Base image"
 check_has "PHP 8.4" "PHP 8.4." "$(docker exec "$(c web)" php84 -v | head -1)"
 check_lacks "Alpine is a stable release, not edge" "_alpha" "$(docker exec "$(c web)" cat /etc/alpine-release)"

@@ -571,29 +571,20 @@ cloudflare_ips() {
   return 0
 }
 
-# Setup log forwarding to Docker logs more efficiently
+# nginx and PHP-FPM log to files; forward new lines to the container's log, each
+# prefixed with its source. awk flushes each line, where sed would hold them in its
+# buffer until it filled.
 setup_log_forwarding() {
-  local LOG_DIR="/tmp/docker-logs"
-  mkdir -p "$LOG_DIR"
-  
-  # Create symbolic links for logs to redirect to stdout/stderr
-  ln -sf /dev/stdout "$LOG_DIR/nginx-access.log"
-  ln -sf /dev/stderr "$LOG_DIR/nginx-error.log"
-  ln -sf /dev/stderr "$LOG_DIR/php-error.log"
-  
-  # Create empty log files if they don't exist
   mkdir -p "/var/log/nginx" "/var/log/php${PHP_VERSION}"
   touch "/var/log/nginx/access.log" "/var/log/nginx/error.log" "/var/log/php${PHP_VERSION}/error.log"
-  
-  # Consolidate log forwarding with a single process
+
   log "Setting up log forwarding..."
-  # Redirect all logs to a single tail command
   {
-    tail -F "/var/log/nginx/access.log" | sed -e 's/^/[nginx:access] /' &
-    tail -F "/var/log/nginx/error.log" | sed -e 's/^/[nginx:error] /' &
-    tail -F "/var/log/php${PHP_VERSION}/error.log" | sed -e 's/^/[php:error] /' &
+    tail -F "/var/log/nginx/access.log" | awk '{ print "[nginx:access] " $0; fflush() }' &
+    tail -F "/var/log/nginx/error.log" | awk '{ print "[nginx:error] " $0; fflush() }' &
+    tail -F "/var/log/php${PHP_VERSION}/error.log" | awk '{ print "[php:error] " $0; fflush() }' &
   } >> /dev/stderr &
-  
+
   return 0
 }
 
