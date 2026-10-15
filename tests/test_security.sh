@@ -35,6 +35,8 @@ check_has "the CSP allows images, video and frames from any HTTPS site" \
   "img-src 'self' data: https:; media-src 'self' https:; frame-src 'self' https:" "$(headers /)"
 check_has "static files get the CSP too" "Content-Security-Policy: default-src 'self'" "$(headers /styles/prosilver/theme/stylesheet.css)"
 check_lacks "no Cross-Origin-Embedder-Policy" "Cross-Origin-Embedder-Policy" "$(headers /)"
+check_lacks "no FLoC opt-out (FLoC no longer exists)" "interest-cohort" "$(headers /)"
+check_lacks "no X-Permitted-Cross-Domain-Policies (Flash and Acrobat only)" "X-Permitted-Cross-Domain-Policies" "$(headers /)"
 start csp "$IMAGE" -e PHPBB_PASSWORD="$T_PASSWORD" -e CONTENT_SECURITY_POLICY="default-src 'self'; img-src *"
 check_eq "CONTENT_SECURITY_POLICY replaces it" "Content-Security-Policy: default-src 'self'; img-src *" \
   "$(docker exec "$(c csp)" curl -s -o /dev/null -D - http://localhost:8080/ | tr -d '\r' | grep -i '^content-security-policy:')"
