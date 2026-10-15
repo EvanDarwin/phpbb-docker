@@ -72,6 +72,21 @@ check_lacks "PHP-FPM's ping isn't served on the public port" "pong" "$(docker ex
 check_eq "nothing listens on TCP but nginx on 8080" "0.0.0.0:8080 :::8080" \
   "$(docker exec "$(c web)" netstat -ltn | awk '$1 ~ /^tcp/ {print $4}' | sort | tr '\n' ' ' | sed 's/ $//')"
 
+echo "Uploads"
+# post_size BYTES: the HTTP status for a POST body of that size
+post_size() { docker exec "$(c web)" sh -c "head -c $1 /dev/zero | curl -s -o /dev/null -w '%{http_code}' -H 'Content-Type: application/octet-stream' --data-binary @- http://127.0.0.1:8080/index.php"; }
+check_eq "nginx's body limit is PHP's post_max_size" "client_max_body_size 33554432;" \
+  "$(docker exec "$(c web)" cat /run/nginx/client-max-body-size.conf)"
+check_lacks "so a 30 MB request reaches PHP" 413 "$(post_size 31457280)"
+check_eq "and a 40 MB one doesn't" 413 "$(post_size 41943040)"
+ini=$(mktemp)
+echo "post_max_size = 64M" > "$ini"
+chmod 644 "$ini"
+start bigpost "$IMAGE" -e PHPBB_PASSWORD="$T_PASSWORD" -v "$ini:/etc/php84/conf.d/99-test.ini:ro"
+check_eq "raising post_max_size raises nginx's limit" "client_max_body_size 67108864;" \
+  "$(docker exec "$(c bigpost)" cat /run/nginx/client-max-body-size.conf)"
+rm -f "$ini"
+
 echo "Logs"
 docker exec "$(c web)" curl -s -o /dev/null http://127.0.0.1:8080/log-probe
 sleep 2

@@ -576,6 +576,25 @@ configure_csp() {
   return 0
 }
 
+# nginx's request body limit follows PHP-FPM's post_max_size, so PHP's settings are the
+# only place to change it. Both read 0 as no limit.
+configure_body_limit() {
+  local value bytes
+  value=$("php-fpm${PHP_VERSION}" -i 2>/dev/null | sed -n 's/^post_max_size => \([^ ]*\) => .*/\1/p')
+  bytes=$("php${PHP_VERSION}" -r 'echo max(0, ini_parse_quantity($argv[1]));' -- "$value" 2>/dev/null)
+  case "$value:$bytes" in
+    :*|*:|*:*[!0-9]*)
+      log "ERROR: Could not read PHP-FPM's post_max_size for nginx's request body limit"
+      return 1 ;;
+  esac
+  if ! echo "client_max_body_size $bytes;" > /run/nginx/client-max-body-size.conf; then
+    log "ERROR: Could not write /run/nginx/client-max-body-size.conf"
+    return 1
+  fi
+  log "Request body limit: $value, from PHP's post_max_size"
+  return 0
+}
+
 # Cloudflare's ranges, as fetched when the image was built, and fetched again at
 # boot once the copy is over a month old. A failed fetch keeps the copy.
 cloudflare_ips() {
@@ -761,6 +780,7 @@ main() {
   # Setup logging and start services
   configure_trusted_proxies || exit 1
   configure_csp || exit 1
+  configure_body_limit || exit 1
   setup_log_forwarding || exit 1
   start_php_fpm || exit 1
   warn_vulnerable_install || exit 1
