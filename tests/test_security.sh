@@ -31,6 +31,9 @@ check_eq "pages send phpBB's Referrer-Policy, once" 1 "$(headers / | grep -ci '^
 check_has "static files get a Referrer-Policy" "Referrer-Policy: strict-origin-when-cross-origin" \
   "$(headers /styles/prosilver/theme/stylesheet.css)"
 check_has "so do nginx's own error pages" "Referrer-Policy: strict-origin-when-cross-origin" "$(headers /config.php)"
+check_has "the CSP allows images, video and frames from any HTTPS site" \
+  "img-src 'self' data: https:; media-src 'self' https:; frame-src 'self' https:" "$(headers /)"
+check_has "static files get the CSP too" "Content-Security-Policy: default-src 'self'" "$(headers /styles/prosilver/theme/stylesheet.css)"
 
 # A dotfile that exists answers exactly like one that doesn't, so scanners
 # can't tell boards made by older images from newer ones
