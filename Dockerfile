@@ -135,6 +135,7 @@ RUN sed -i "s/user = nobody/user = phpbb/g" /etc/php${PHP_VERSION}/php-fpm.d/www
 # Copy scripts and configurations
 COPY scripts/docker-entrypoint.sh scripts/install-from-yml.sh scripts/update-cloudflare-ips.sh /opt/.docker/
 COPY config/nginx.conf /etc/nginx/http.d/default.conf
+COPY patches/ /tmp/phpbb-patches/
 
 # Install phpBB's code read-only (owned by root) at PHPBB_CODE. Everything a board
 # writes lives on the PHPBB_ROOT volume, in the same layout earlier versions of this
@@ -156,6 +157,11 @@ RUN set -e; \
     test -f phpBB3/index.php; \
     mkdir -p "$(dirname "${PHPBB_CODE}")" "${PHPBB_DIST}"; \
     mv phpBB3 "${PHPBB_CODE}"; \
+    # Fixes to phpBB for this image's layout; the build fails unless each applies exactly
+    apk add --no-cache --virtual .patch patch; \
+    for p in /tmp/phpbb-patches/*.patch; do patch -p1 --forward --fuzz=0 -d "${PHPBB_CODE}" < "$p"; done; \
+    apk del .patch; \
+    rm -rf /tmp/phpbb-patches; \
     for item in store files images ext styles language config.php; do mv "${PHPBB_CODE}/$item" "${PHPBB_DIST}/$item"; done; \
     rm -rf "${PHPBB_CODE}/cache"; \
     LEGACY_BASE_VERSION=3.3.15; \

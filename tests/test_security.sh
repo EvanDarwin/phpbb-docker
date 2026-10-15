@@ -47,6 +47,20 @@ wait_up cspbad
 check_eq "a value nginx's configuration can't hold stops the container" 1 "$(exit_code cspbad)"
 check_has "and says why" "CONTENT_SECURITY_POLICY can't contain double quotes" "$(logs cspbad)"
 
+# assets PATH: the scripts and stylesheets a page links, as paths from the web root
+assets() {
+  docker exec "$(c web)" curl -s "http://localhost:8080$1" | grep -oE '(src|href)="[^"]+\.(js|css)[^"]*"' \
+    | sed -E 's/^(src|href)="//; s/"$//; s/&amp;/\&/g; s#^(\./|\.\./)+#/#'
+}
+for page in / /app.php/help/faq; do
+  check_lacks "$page links no asset by its filesystem path" "/opt/" "$(assets "$page")"
+  failed=""
+  for asset in $(assets "$page"); do
+    [ "$(http_code web "$asset")" = 200 ] || failed="$failed $asset"
+  done
+  check_eq "every script and stylesheet on $page loads" "" "$failed"
+done
+
 # A dotfile that exists answers exactly like one that doesn't, so scanners
 # can't tell boards made by older images from newer ones
 response() { docker exec "$(c web)" curl -s -D - "http://localhost:8080$1" | grep -vi '^date:'; }
