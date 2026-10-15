@@ -99,6 +99,8 @@ RUN sed -i "s/user = nobody/user = phpbb/g" /etc/php${PHP_VERSION}/php-fpm.d/www
     sed -i "s/;listen.owner = nobody/listen.owner = phpbb/g" /etc/php${PHP_VERSION}/php-fpm.d/www.conf && \
     sed -i "s/;listen.group = nobody/listen.group = phpbb/g" /etc/php${PHP_VERSION}/php-fpm.d/www.conf && \
     echo "security.limit_extensions = .php" >> /etc/php${PHP_VERSION}/php-fpm.d/www.conf && \
+    sed -i "s|^listen = 127.0.0.1:9000$|listen = /run/php-fpm/php-fpm.sock|" /etc/php${PHP_VERSION}/php-fpm.d/www.conf && \
+    grep -q "^listen = /run/php-fpm/php-fpm.sock$" /etc/php${PHP_VERSION}/php-fpm.d/www.conf && \
     # Allow nginx to bind to privileged ports
     setcap cap_net_bind_service=+ep /usr/sbin/nginx && \
     # Optimize PHP with opcache for better performance
@@ -119,8 +121,8 @@ RUN sed -i "s/user = nobody/user = phpbb/g" /etc/php${PHP_VERSION}/php-fpm.d/www
     echo "post_max_size = 32M" >> /etc/php${PHP_VERSION}/php.ini && \
     echo "upload_max_filesize = 24M" >> /etc/php${PHP_VERSION}/php.ini && \
     # Create necessary directories with proper permissions
-    mkdir -p /var/lib/nginx /var/log/nginx /var/log/php${PHP_VERSION} /run/nginx && \
-    chown -R phpbb:phpbb /var/lib/nginx /var/log/nginx /var/log/php${PHP_VERSION} /run/nginx && \
+    mkdir -p /var/lib/nginx /var/log/nginx /var/log/php${PHP_VERSION} /run/nginx /run/php-fpm && \
+    chown -R phpbb:phpbb /var/lib/nginx /var/log/nginx /var/log/php${PHP_VERSION} /run/nginx /run/php-fpm && \
     touch /run/nginx.pid && \
     chown phpbb:phpbb /run/nginx.pid
 
