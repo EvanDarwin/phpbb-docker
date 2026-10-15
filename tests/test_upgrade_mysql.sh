@@ -37,9 +37,8 @@ check_eq "admin logs in" 2 "$(login up1 admin "$T_PASSWORD")"
 check_eq "backup includes a database dump" 1 "$(backup_entry_count up1)"
 check_has "the dump is of the database before the upgrade" "'$LEGACY_PHPBB_VERSION'" "$(dumped_version up1)"
 docker exec "$(c db)" mariadb -uroot -p"$root_password" -e "CREATE DATABASE restored; GRANT ALL ON restored.* TO 'phpbb'@'%';"
-docker exec "$(c up1)" sh -c 'unzip -p /opt/phpbb/backups/*.zip database/database.sql' \
-  | docker exec -i "$(c db)" mariadb -uphpbb -pdbpass restored
-check_eq "the dump restores into an empty database" "$LEGACY_PHPBB_VERSION" "$(db_version restored)"
+restore_check "the dump restores into an empty database" up1 docker exec -i "$(c db)" mariadb -uphpbb -pdbpass restored
+check_eq "the restored board is from before the upgrade" "$LEGACY_PHPBB_VERSION" "$(db_version restored)"
 
 echo "MariaDB board from this image at phpBB $old_version, whose database dump fails"
 # shellcheck disable=SC2046

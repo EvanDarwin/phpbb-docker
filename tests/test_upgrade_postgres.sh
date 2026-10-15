@@ -27,8 +27,7 @@ check_eq "database upgraded to phpBB $version" "$version" "$(db_version phpbb)"
 check_eq "admin logs in" 2 "$(login up1 admin "$T_PASSWORD")"
 check_lacks "database dumped into the backup" "Could not dump the database" "$(logs up1)"
 docker exec "$(c db)" psql -U phpbb -d phpbb -c 'CREATE DATABASE restored' >/dev/null
-docker exec "$(c up1)" sh -c 'unzip -p /opt/phpbb/backups/*.zip database/database.sql' \
-  | docker exec -i -e PGOPTIONS="-c client_min_messages=warning" "$(c db)" psql -q -v ON_ERROR_STOP=1 -U phpbb -d restored >/dev/null
-check_eq "the dump restores into an empty database" "$old_version" "$(db_version restored)"
+restore_check "the dump restores into an empty database" up1 docker exec -i "$(c db)" psql -q -v ON_ERROR_STOP=1 -U phpbb -d restored
+check_eq "the restored board is from before the upgrade" "$old_version" "$(db_version restored)"
 
 finish

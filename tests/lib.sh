@@ -122,6 +122,21 @@ rm -f "$jar"
 EOF
 }
 
+# restore_check DESCRIPTION NAME RESTORE-COMMAND...: pipe the database dump in
+# container NAME's upgrade backup into the command. Passes only when extracting
+# the dump and every statement of the restore succeed.
+restore_check() {
+  desc=$1; name=$2; shift 2
+  dump=$(mktemp)
+  if docker exec "$(c "$name")" sh -c 'unzip -p /opt/phpbb/backups/*.zip database/database.sql' > "$dump" \
+      && "$@" < "$dump" >/dev/null 2>&1; then
+    ok "$desc"
+  else
+    fail "$desc"
+  fi
+  rm -f "$dump"
+}
+
 # The generated admin password from a container's first-start banner
 banner_password() { logs "$1" | sed -n 's/^\[[0-9a-f]*\]   Password: //p' | head -1; }
 
