@@ -10,8 +10,13 @@ check "the data on the volume is writable" docker exec "$(c web)" touch "$DATA/f
 
 echo "Blocked paths"
 check_eq "board index loads" 200 "$(http_code web /)"
-for path in /install/ /install/app.php /config.php /phpbb/session.php /.docker-install-version /.change-admin-password; do
+for path in /install/ /install/app.php /config.php /phpbb/session.php /.docker-install-version /.change-admin-password /.git/config /board.sqlite /backup.DB \
+    /files/ /images/avatars/upload/1.jpg /composer.json /ext/acme/demo/vendor/autoload.php /ext/acme/demo/tests/bootstrap.php; do
   check_eq "$path is forbidden" 403 "$(http_code web "$path")"
+done
+# File names that merely start with a blocked directory's name
+for path in /assets/cache.png /assets/files.css /assets/binoculars.svg /assets/docs-icon.png /assets/testsuite.js /assets/configurator.js; do
+  check_eq "$path is not blocked" 404 "$(http_code web "$path")"
 done
 
 check_eq "phpBB's bundled extension stays reachable" 200 "$(http_code web /ext/phpbb/viglink/styles/all/theme/viglink.css)"
