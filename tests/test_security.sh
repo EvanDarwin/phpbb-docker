@@ -37,6 +37,8 @@ check_has "static files get the CSP too" "Content-Security-Policy: default-src '
 check_lacks "no Cross-Origin-Embedder-Policy" "Cross-Origin-Embedder-Policy" "$(headers /)"
 check_lacks "no FLoC opt-out (FLoC no longer exists)" "interest-cohort" "$(headers /)"
 check_lacks "no X-Permitted-Cross-Domain-Policies (Flash and Acrobat only)" "X-Permitted-Cross-Domain-Policies" "$(headers /)"
+check_has "Permissions-Policy turns off features a forum never uses" \
+  "Permissions-Policy: accelerometer=(), bluetooth=(), camera=(), display-capture=(), geolocation=(), gyroscope=(), hid=(), idle-detection=(), magnetometer=(), microphone=(), midi=(), payment=(), screen-wake-lock=(), serial=(), usb=(), xr-spatial-tracking=()" "$(headers /)"
 start csp "$IMAGE" -e PHPBB_PASSWORD="$T_PASSWORD" -e CONTENT_SECURITY_POLICY="default-src 'self'; img-src *"
 check_eq "CONTENT_SECURITY_POLICY replaces it" "Content-Security-Policy: default-src 'self'; img-src *" \
   "$(docker exec "$(c csp)" curl -s -o /dev/null -D - http://localhost:8080/ | tr -d '\r' | grep -i '^content-security-policy:')"
