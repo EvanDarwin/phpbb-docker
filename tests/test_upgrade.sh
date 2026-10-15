@@ -73,7 +73,7 @@ start old2 "$OLD_IMAGE" -v "$(vol board2):/opt/phpbb" -e PHPBB_PASSWORD="$T_PASS
 docker stop "$(c old2)" >/dev/null
 on_volume board2 "sed -i 's/class=\"row-item-link\"><\/a><!-- ENDIF -->/class=\"row-item-link admin-edit\"><\/a><!-- ENDIF -->/' $DATA/$VF"
 # phpBB hasn't changed a stock image lately, so stand in for one by changing the
-# image's copy in the merge base; the NUL byte makes git treat it as binary
+# image's copy in the merge base; the NUL byte makes diff3 treat it as binary
 GIF=images/smilies/icon_e_wink.gif
 on_volume board2 "printf 'GIF89a\000base' > $DATA/.phpbb-dist-base/$GIF && printf 'GIF89a\000admin' > $DATA/$GIF"
 before=$(on_volume board2 "md5sum $DATA/$VF")
@@ -81,7 +81,7 @@ start up2 "$IMAGE" -v "$(vol board2):/opt/phpbb"
 check_eq "upgrade stops with an error" 1 "$(exit_code up2)"
 check_has "names the conflicting file" "$VF was changed on the volume and in phpBB $version, and the changes conflict" "$(logs up2)"
 check_has "prints the conflict" "<<<<<<< volume" "$(logs up2)"
-check_has "names the image git can't merge, and why" "$GIF was changed on the volume and in phpBB $version, and git can't merge it: error: Cannot merge binary files" "$(logs up2)"
+check_has "names the image that can't be merged, and why" "$GIF was changed on the volume and in phpBB $version, and can't be merged: diff3: diff failed: Binary files" "$(logs up2)"
 check_eq "database untouched" "$old_version" "$(db_version_on board2)"
 check_eq "file untouched" "$before" "$(on_volume board2 "md5sum $DATA/$VF")"
 check_fails "no backup written" on_volume board2 "test -e /opt/phpbb/backups"

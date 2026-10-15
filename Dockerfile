@@ -83,7 +83,7 @@ RUN apk update && \
     apk add --no-cache \
     nginx \
     curl \
-    git \
+    diffutils \
     unzip \
     libcap \
     ca-certificates \

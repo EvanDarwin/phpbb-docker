@@ -27,5 +27,6 @@ check_eq "an existing marker file answers like a missing dotfile" "$(response /.
 echo "Base image"
 check_has "PHP 8.4" "PHP 8.4." "$(docker exec "$(c web)" php84 -v | head -1)"
 check_lacks "Alpine is a stable release, not edge" "_alpha" "$(docker exec "$(c web)" cat /etc/alpine-release)"
+check_fails "git is not installed (merges use diffutils' diff3)" docker exec "$(c web)" sh -c 'command -v git'
 
 finish

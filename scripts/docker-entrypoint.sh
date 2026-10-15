@@ -178,7 +178,7 @@ save_bundled_base() {
 # Three-way merge of the bundled files into a staging directory, changing nothing
 # on the volume: base = merge_base_dir, ours = the volume, theirs = this image.
 # Files the admin didn't change take phpBB's new version, files phpBB didn't change
-# keep the admin's, and files both changed go through git merge-file. Files the
+# keep the admin's, and files both changed go through diff3's merge. Files the
 # admin added are never looked at. The staged files are listed in .updates and the
 # files to remove in .deletes. Returns 1 after logging every conflict, or 2 if the
 # staging directory can't be written.
@@ -213,20 +213,22 @@ stage_bundled_merge() {
     else
       mkdir -p "$(dirname "$stage/$rel")" || { log "ERROR: Could not stage $rel in $stage"; return 2; }
       rc=0
-      git merge-file -p --diff3 -L "volume" -L "phpBB $(cat "$base/VERSION")" -L "phpBB ${PHPBB_VERSION}" \
+      # -E merges changes made identically on both sides (as on a volume where an
+      # earlier, interrupted upgrade already wrote them); diff3's default reports them
+      # as conflicts
+      diff3 -m -E -L "volume" -L "phpBB $(cat "$base/VERSION")" -L "phpBB ${PHPBB_VERSION}" \
         "$o" "$( [ -f "$b" ] && echo "$b" || echo /dev/null )" "$t" > "$stage/$rel" 2> "$stage/.merge-error" || rc=$?
       if [ "$rc" -eq 0 ]; then
         echo "$rel" >> "$stage/.updates" || { log "ERROR: Could not write $stage/.updates"; return 2; }
-      elif [ "$rc" -lt 128 ]; then
-        # git merge-file exits with the number of conflicts
+      elif [ "$rc" -eq 1 ]; then
         conflicts=$((conflicts + 1))
         log "ERROR: $rel was changed on the volume and in phpBB ${PHPBB_VERSION}, and the changes conflict:"
         awk '/^<<<<<<< /{show=1; printf "  at line %d:\n", NR} show{print "    " $0} /^>>>>>>> /{show=0}' "$stage/$rel" \
           | while IFS= read -r line; do log "$line"; done
       else
-        # A negative exit (255): git can't merge it at all, as with binary files
+        # Exit 2: diff3 can't merge it at all, as with binary files
         conflicts=$((conflicts + 1))
-        log "ERROR: $rel was changed on the volume and in phpBB ${PHPBB_VERSION}, and git can't merge it: $(cat "$stage/.merge-error")"
+        log "ERROR: $rel was changed on the volume and in phpBB ${PHPBB_VERSION}, and can't be merged: $(cat "$stage/.merge-error")"
       fi
     fi
   done < "$stage/.files"
