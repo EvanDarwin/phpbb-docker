@@ -66,6 +66,7 @@ check "board on phpBB $version: container is running" running down1
 check_has "says why it could not read the version" "Could not read the board's phpBB version from its database" "$(logs down1)"
 check_has "and that the board is up to date" "the board was already up to date with phpBB $version" "$(logs down1)"
 check_eq "web server answers" 200 "$(http_code down1 /styles/prosilver/theme/stylesheet.css)"
+check "health check passes" healthy down1
 # shellcheck disable=SC2046
 start down3 "$IMAGE" -v "$(vol board3):/opt/phpbb" $(board_env phpbb3)
 check "board on phpBB $old_version: container is running" running down3

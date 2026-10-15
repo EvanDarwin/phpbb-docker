@@ -35,6 +35,8 @@ ENV PHPBB_FORUM_NAME="My phpBB Forum" \
     SERVER_PORT="8080" \
     SCRIPT_PATH="/" \
     COOKIE_SECURE="false" \
+    TRUSTED_PROXIES="" \
+    CONTENT_SECURITY_POLICY="" \
     PHP_MEMORY_LIMIT="128M" \
     PHP_CUSTOM_INI=""
 
@@ -85,7 +87,6 @@ RUN apk update && \
     curl \
     diffutils \
     unzip \
-    libcap \
     ca-certificates \
     mysql-client \
     postgresql-client \
@@ -99,8 +100,15 @@ RUN sed -i "s/user = nobody/user = phpbb/g" /etc/php${PHP_VERSION}/php-fpm.d/www
     sed -i "s/;listen.owner = nobody/listen.owner = phpbb/g" /etc/php${PHP_VERSION}/php-fpm.d/www.conf && \
     sed -i "s/;listen.group = nobody/listen.group = phpbb/g" /etc/php${PHP_VERSION}/php-fpm.d/www.conf && \
     echo "security.limit_extensions = .php" >> /etc/php${PHP_VERSION}/php-fpm.d/www.conf && \
-    # Allow nginx to bind to privileged ports
-    setcap cap_net_bind_service=+ep /usr/sbin/nginx && \
+    echo "ping.path = /fpm-ping" >> /etc/php${PHP_VERSION}/php-fpm.d/www.conf && \
+    sed -i "s|^listen = 127.0.0.1:9000$|listen = /run/php-fpm/php-fpm.sock|" /etc/php${PHP_VERSION}/php-fpm.d/www.conf && \
+    grep -q "^listen = /run/php-fpm/php-fpm.sock$" /etc/php${PHP_VERSION}/php-fpm.d/www.conf && \
+    # Logs go to links the entrypoint points at /var/log/phpbb, or at the container's
+    # output when that can't be written
+    sed -i "s|^;error_log = log/php${PHP_VERSION}/error.log$|error_log = /run/php-fpm/error.log|" /etc/php${PHP_VERSION}/php-fpm.conf && \
+    grep -q "^error_log = /run/php-fpm/error.log$" /etc/php${PHP_VERSION}/php-fpm.conf && \
+    sed -i "s|/var/log/nginx/error.log|/run/nginx/error.log|; s|/var/log/nginx/access.log|/run/nginx/access.log|" /etc/nginx/nginx.conf && \
+    ! grep -q "/var/log/nginx/" /etc/nginx/nginx.conf && \
     # Optimize PHP with opcache for better performance
     echo "opcache.memory_consumption=128" >> /etc/php${PHP_VERSION}/conf.d/00_opcache.ini && \
     echo "opcache.interned_strings_buffer=8" >> /etc/php${PHP_VERSION}/conf.d/00_opcache.ini && \
@@ -119,14 +127,15 @@ RUN sed -i "s/user = nobody/user = phpbb/g" /etc/php${PHP_VERSION}/php-fpm.d/www
     echo "post_max_size = 32M" >> /etc/php${PHP_VERSION}/php.ini && \
     echo "upload_max_filesize = 24M" >> /etc/php${PHP_VERSION}/php.ini && \
     # Create necessary directories with proper permissions
-    mkdir -p /var/lib/nginx /var/log/nginx /var/log/php${PHP_VERSION} /run/nginx && \
-    chown -R phpbb:phpbb /var/lib/nginx /var/log/nginx /var/log/php${PHP_VERSION} /run/nginx && \
+    mkdir -p /var/lib/nginx /var/log/nginx /var/log/phpbb /run/nginx /run/php-fpm && \
+    chown -R phpbb:phpbb /var/lib/nginx /var/log/nginx /var/log/phpbb /run/nginx /run/php-fpm && \
     touch /run/nginx.pid && \
     chown phpbb:phpbb /run/nginx.pid
 
 # Copy scripts and configurations
-COPY scripts/docker-entrypoint.sh scripts/install-from-yml.sh /opt/.docker/
+COPY scripts/docker-entrypoint.sh scripts/install-from-yml.sh scripts/update-cloudflare-ips.sh /opt/.docker/
 COPY config/nginx.conf /etc/nginx/http.d/default.conf
+COPY patches/ /tmp/phpbb-patches/
 
 # Install phpBB's code read-only (owned by root) at PHPBB_CODE. Everything a board
 # writes lives on the PHPBB_ROOT volume, in the same layout earlier versions of this
@@ -148,6 +157,11 @@ RUN set -e; \
     test -f phpBB3/index.php; \
     mkdir -p "$(dirname "${PHPBB_CODE}")" "${PHPBB_DIST}"; \
     mv phpBB3 "${PHPBB_CODE}"; \
+    # Fixes to phpBB for this image's layout; the build fails unless each applies exactly
+    apk add --no-cache --virtual .patch patch; \
+    for p in /tmp/phpbb-patches/*.patch; do patch -p1 --forward --fuzz=0 -d "${PHPBB_CODE}" < "$p"; done; \
+    apk del .patch; \
+    rm -rf /tmp/phpbb-patches; \
     for item in store files images ext styles language config.php; do mv "${PHPBB_CODE}/$item" "${PHPBB_DIST}/$item"; done; \
     rm -rf "${PHPBB_CODE}/cache"; \
     LEGACY_BASE_VERSION=3.3.15; \
@@ -177,6 +191,9 @@ RUN set -e; \
 RUN chmod 755 /opt/.docker/*.sh && \
     chown -R root:phpbb /opt/.docker && \
     chmod 750 /opt/.docker && \
+    # Cloudflare's IP ranges for TRUSTED_PROXIES=cloudflare, refreshed at boot when stale
+    mkdir -p /usr/share/phpbb-docker && \
+    /opt/.docker/update-cloudflare-ips.sh /usr/share/phpbb-docker/cloudflare-ips && \
     # Create SQLite database file with proper permissions
     touch ${PHPBB_ROOT}/phpbb.sqlite && \
     chown phpbb:phpbb ${PHPBB_ROOT}/phpbb.sqlite && \
@@ -195,7 +212,7 @@ EXPOSE 8080
 
 # Add healthcheck to verify the service is running
 HEALTHCHECK --interval=30s --timeout=5s --start-period=30s --retries=3 \
-    CMD curl -f http://localhost:8080/ || exit 1
+    CMD curl -fs --unix-socket /run/nginx/health.sock http://localhost/fpm-ping || exit 1
 
 # Switch to non-root user for running the container
 USER phpbb

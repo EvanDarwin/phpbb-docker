@@ -1,0 +1,24 @@
+--- a/phpbb/template/asset.php
++++ b/phpbb/template/asset.php
+@@ -153,6 +153,21 @@
+ 		// Since 1.7.0 Twig returns the real path of the file. We need it to be relative.
+ 		$real_root_path = $this->filesystem->realpath($this->path_helper->get_phpbb_root_path()) . DIRECTORY_SEPARATOR;
+ 
++		// styles/ and ext/ may be symbolic links out of the root: map an asset under one of
++		// them back through the link
++		if ($real_root_path && substr($path . DIRECTORY_SEPARATOR, 0, strlen($real_root_path)) !== $real_root_path)
++		{
++			foreach (array('styles', 'ext') as $dir)
++			{
++				$real_dir = $this->filesystem->realpath($this->path_helper->get_phpbb_root_path() . $dir);
++				if ($real_dir !== false && substr($path, 0, strlen($real_dir) + 1) === $real_dir . DIRECTORY_SEPARATOR)
++				{
++					$path = $real_root_path . $dir . substr($path, strlen($real_dir));
++					break;
++				}
++			}
++		}
++
+ 		// If the asset is under the phpBB root path we need to remove its path and then prepend $phpbb_root_path
+ 		if ($real_root_path && substr($path . DIRECTORY_SEPARATOR, 0, strlen($real_root_path)) === $real_root_path)
+ 		{
