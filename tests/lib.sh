@@ -122,6 +122,11 @@ rm -f "$jar"
 EOF
 }
 
+# healthy NAME: run the image's own HEALTHCHECK command in the container
+healthy() {
+  docker exec "$(c "$1")" sh -c "$(docker inspect -f '{{index .Config.Healthcheck.Test 1}}' "$(c "$1")")"
+}
+
 # restore_check DESCRIPTION NAME RESTORE-COMMAND...: pipe the database dump in
 # container NAME's upgrade backup into the command. Passes only when extracting
 # the dump and every statement of the restore succeed.

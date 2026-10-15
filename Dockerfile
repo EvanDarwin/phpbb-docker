@@ -99,6 +99,7 @@ RUN sed -i "s/user = nobody/user = phpbb/g" /etc/php${PHP_VERSION}/php-fpm.d/www
     sed -i "s/;listen.owner = nobody/listen.owner = phpbb/g" /etc/php${PHP_VERSION}/php-fpm.d/www.conf && \
     sed -i "s/;listen.group = nobody/listen.group = phpbb/g" /etc/php${PHP_VERSION}/php-fpm.d/www.conf && \
     echo "security.limit_extensions = .php" >> /etc/php${PHP_VERSION}/php-fpm.d/www.conf && \
+    echo "ping.path = /fpm-ping" >> /etc/php${PHP_VERSION}/php-fpm.d/www.conf && \
     sed -i "s|^listen = 127.0.0.1:9000$|listen = /run/php-fpm/php-fpm.sock|" /etc/php${PHP_VERSION}/php-fpm.d/www.conf && \
     grep -q "^listen = /run/php-fpm/php-fpm.sock$" /etc/php${PHP_VERSION}/php-fpm.d/www.conf && \
     # Allow nginx to bind to privileged ports
@@ -197,7 +198,7 @@ EXPOSE 8080
 
 # Add healthcheck to verify the service is running
 HEALTHCHECK --interval=30s --timeout=5s --start-period=30s --retries=3 \
-    CMD curl -f http://localhost:8080/ || exit 1
+    CMD curl -fs --unix-socket /run/nginx/health.sock http://localhost/fpm-ping || exit 1
 
 # Switch to non-root user for running the container
 USER phpbb

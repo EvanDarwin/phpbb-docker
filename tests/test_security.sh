@@ -24,9 +24,19 @@ check_has "with phpBB's own page, not nginx's" "The requested topic does not exi
 response() { docker exec "$(c web)" curl -s -D - "http://localhost:8080$1" | grep -vi '^date:'; }
 check_eq "an existing marker file answers like a missing dotfile" "$(response /.no-such-file)" "$(response /.docker-install-version)"
 
+echo "Health check"
+check "passes" healthy web
+check_lacks "PHP-FPM's ping isn't served on the public port" "pong" "$(docker exec "$(c web)" curl -s http://localhost:8080/fpm-ping)"
+check_eq "nothing listens on TCP but nginx on 8080" "0.0.0.0:8080 :::8080" \
+  "$(docker exec "$(c web)" netstat -ltn | awk '$1 ~ /^tcp/ {print $4}' | sort | tr '\n' ' ' | sed 's/ $//')"
+
 echo "Base image"
 check_has "PHP 8.4" "PHP 8.4." "$(docker exec "$(c web)" php84 -v | head -1)"
 check_lacks "Alpine is a stable release, not edge" "_alpha" "$(docker exec "$(c web)" cat /etc/alpine-release)"
 check_fails "git is not installed (merges use diffutils' diff3)" docker exec "$(c web)" sh -c 'command -v git'
+
+docker exec "$(c web)" sh -c 'kill $(pidof php-fpm84 | tr " " "\n" | sort -n | head -1)'
+sleep 2
+check_fails "health check fails once PHP-FPM is down" healthy web
 
 finish
