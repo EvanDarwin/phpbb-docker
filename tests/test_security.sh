@@ -27,6 +27,8 @@ check_has "with phpBB's own page, not nginx's" "The requested topic does not exi
 headers() { docker exec "$(c web)" curl -s -o /dev/null -D - "http://localhost:8080$1" | tr -d '\r'; }
 check_has "static files get the security headers" "X-Content-Type-Options: nosniff" \
   "$(headers /styles/prosilver/theme/stylesheet.css)"
+check_eq "static files send one Cache-Control and no Expires" "Cache-Control: public, max-age=2592000" \
+  "$(headers /styles/prosilver/theme/stylesheet.css | grep -iE '^(cache-control|expires):')"
 check_eq "pages send phpBB's Referrer-Policy, once" 1 "$(headers / | grep -ci '^referrer-policy:')"
 check_has "static files get a Referrer-Policy" "Referrer-Policy: strict-origin-when-cross-origin" \
   "$(headers /styles/prosilver/theme/stylesheet.css)"
