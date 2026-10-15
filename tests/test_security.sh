@@ -48,6 +48,10 @@ check_has "PHP 8.4" "PHP 8.4." "$(docker exec "$(c web)" php84 -v | head -1)"
 check_lacks "Alpine is a stable release, not edge" "_alpha" "$(docker exec "$(c web)" cat /etc/alpine-release)"
 check_fails "git is not installed (merges use diffutils' diff3)" docker exec "$(c web)" sh -c 'command -v git'
 
+start capdrop "$IMAGE" --cap-drop ALL -e PHPBB_PASSWORD="$T_PASSWORD"
+check "runs with every capability dropped" running capdrop
+check_eq "and serves the board" 200 "$(http_code capdrop /)"
+
 docker exec "$(c web)" sh -c 'kill $(pidof php-fpm84 | tr " " "\n" | sort -n | head -1)'
 sleep 2
 check_fails "health check fails once PHP-FPM is down" healthy web

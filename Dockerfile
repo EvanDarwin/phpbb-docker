@@ -85,7 +85,6 @@ RUN apk update && \
     curl \
     diffutils \
     unzip \
-    libcap \
     ca-certificates \
     mysql-client \
     postgresql-client \
@@ -102,8 +101,6 @@ RUN sed -i "s/user = nobody/user = phpbb/g" /etc/php${PHP_VERSION}/php-fpm.d/www
     echo "ping.path = /fpm-ping" >> /etc/php${PHP_VERSION}/php-fpm.d/www.conf && \
     sed -i "s|^listen = 127.0.0.1:9000$|listen = /run/php-fpm/php-fpm.sock|" /etc/php${PHP_VERSION}/php-fpm.d/www.conf && \
     grep -q "^listen = /run/php-fpm/php-fpm.sock$" /etc/php${PHP_VERSION}/php-fpm.d/www.conf && \
-    # Allow nginx to bind to privileged ports
-    setcap cap_net_bind_service=+ep /usr/sbin/nginx && \
     # Optimize PHP with opcache for better performance
     echo "opcache.memory_consumption=128" >> /etc/php${PHP_VERSION}/conf.d/00_opcache.ini && \
     echo "opcache.interned_strings_buffer=8" >> /etc/php${PHP_VERSION}/conf.d/00_opcache.ini && \
