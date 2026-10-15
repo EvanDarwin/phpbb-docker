@@ -1,8 +1,3 @@
-phpBB builds an asset's URL from its real path, which for an asset in a
-symbolically linked styles/ or ext/ directory is outside the phpBB root, so
-the URL came out as a filesystem path (/opt/phpbb/phpbb/styles/...). The
-image links both directories to the data volume.
-
 --- a/phpbb/template/asset.php
 +++ b/phpbb/template/asset.php
 @@ -153,6 +153,21 @@
