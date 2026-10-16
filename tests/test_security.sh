@@ -68,6 +68,13 @@ done
 response() { docker exec "$(c web)" curl -s -D - "http://localhost:8080$1" | grep -vi '^date:'; }
 check_eq "an existing marker file answers like a missing dotfile" "$(response /.no-such-file)" "$(response /.docker-install-version)"
 
+# phpBB names the page after the script nginx says ran (<body class="section-...">): always
+# app.php, never a name taken from the URL, even when the path holds a newline
+for path in /x.php/y /app.php/a%0ab; do
+  check_has "$path runs as app.php" "section-app/" "$(docker exec "$(c web)" curl -s "http://localhost:8080$path")"
+done
+check_eq "a file that isn't PHP can't run as PHP" 404 "$(http_code web /styles/prosilver/theme/stylesheet.css/x.php)"
+
 echo "Health check"
 check "passes" healthy web
 check_lacks "PHP-FPM's ping isn't served on the public port" "pong" "$(docker exec "$(c web)" curl -s http://localhost:8080/fpm-ping)"
