@@ -90,6 +90,10 @@ copy_config_php() {
   mkdir -p "$PHPBB_ROOT/phpbb"
   if [ -f "$PHPBB_ROOT/config/config.php" ] ; then
     for CONFIGFILE in config.php robots.txt ; do
+      # this is optional; skip if not present in the config dir
+      if [ ! -f "$PHPBB_ROOT/config/$CONFIGFILE" ] ; then
+        continue
+      fi
       log "copy $PHPBB_ROOT/config/$CONFIGFILE to phpbb installation"
       # update permissions
       chmod 640 "$PHPBB_ROOT/config/$CONFIGFILE" || {
