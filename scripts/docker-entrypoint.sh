@@ -506,23 +506,15 @@ warn_vulnerable_install() {
   return 0
 }
 
-# Apply custom PHP.ini options if provided
+# PHP_MEMORY_LIMIT, then PHP_CUSTOM_INI, which can override it, into the directory
+# PHP_INI_SCAN_DIR adds after PHP's own settings. Written on every start.
 apply_custom_php_ini() {
-  if [ -n "${PHP_CUSTOM_INI:-}" ]; then
-    log "Applying custom PHP.ini options..."
-    # Use a secure temporary file with restricted permissions
-    PHP_TMP_FILE=$(mktemp)
-    chmod 600 "$PHP_TMP_FILE"
-    
-    echo "${PHP_CUSTOM_INI}" > "$PHP_TMP_FILE"
-    if ! cat "$PHP_TMP_FILE" >> "/etc/php${PHP_VERSION}/php.ini"; then
-      rm -f "$PHP_TMP_FILE"
-      log "ERROR: Failed to apply custom PHP.ini options."
-      return 1
-    fi
-    rm -f "$PHP_TMP_FILE"
-    log "Custom PHP.ini options applied successfully"
+  local ini="${PHP_INI_SCAN_DIR##*:}/environment.ini"
+  if ! printf '%s\n%s\n' "${PHP_MEMORY_LIMIT:+memory_limit = $PHP_MEMORY_LIMIT}" "${PHP_CUSTOM_INI:-}" > "$ini"; then
+    log "ERROR: Could not write $ini"
+    return 1
   fi
+  [ -z "${PHP_CUSTOM_INI:-}" ] || log "Applied PHP_CUSTOM_INI"
   return 0
 }
 

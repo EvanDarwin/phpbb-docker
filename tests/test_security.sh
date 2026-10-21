@@ -98,6 +98,19 @@ rm -f "$ini"
 check_has "PHP-FPM confines PHP to the board with open_basedir from php.ini" "/var/www/phpbb:/opt/phpbb:/var/cache/phpbb:/tmp" \
   "$(docker exec "$(c web)" php-fpm84 -i | grep '^open_basedir')"
 
+echo "PHP settings"
+# php_setting NAME SETTING: PHP-FPM's value for SETTING
+php_setting() { docker exec "$(c "$1")" php-fpm84 -i | sed -n "s/^$2 => \([^ ]*\) => .*/\1/p"; }
+start phpmem "$IMAGE" -e PHPBB_PASSWORD="$T_PASSWORD" -e PHP_MEMORY_LIMIT=512M
+check_eq "PHP_MEMORY_LIMIT sets PHP-FPM's memory_limit" 512M "$(php_setting phpmem memory_limit)"
+start phpini "$IMAGE" -e PHPBB_PASSWORD="$T_PASSWORD" -e PHP_MEMORY_LIMIT=512M -e "PHP_CUSTOM_INI=memory_limit = 256M
+post_max_size = 48M"
+check "PHP_CUSTOM_INI doesn't stop the container" running phpini
+check_eq "PHP_CUSTOM_INI sets PHP-FPM's settings, over PHP_MEMORY_LIMIT" "256M 48M" \
+  "$(php_setting phpini memory_limit) $(php_setting phpini post_max_size)"
+check_eq "and nginx's body limit follows" "client_max_body_size 50331648;" \
+  "$(docker exec "$(c phpini)" cat /run/nginx/client-max-body-size.conf)"
+
 echo "Logs"
 docker exec "$(c web)" curl -s -o /dev/null http://127.0.0.1:8080/log-probe
 sleep 2

@@ -94,6 +94,10 @@ RUN apk update && \
     # Cleanup to reduce layer size
     rm -rf /var/cache/apk/*
 
+# PHP also reads the settings the entrypoint writes from PHP_MEMORY_LIMIT and
+# PHP_CUSTOM_INI, after its own conf.d (which the leading colon keeps)
+ENV PHP_INI_SCAN_DIR=":/run/php-fpm/conf.d"
+
 # Configure PHP-FPM and security settings
 RUN sed -i "s/user = nobody/user = phpbb/g" /etc/php${PHP_VERSION}/php-fpm.d/www.conf && \
     sed -i "s/group = nobody/group = phpbb/g" /etc/php${PHP_VERSION}/php-fpm.d/www.conf && \
@@ -127,7 +131,7 @@ RUN sed -i "s/user = nobody/user = phpbb/g" /etc/php${PHP_VERSION}/php-fpm.d/www
     echo "post_max_size = 32M" >> /etc/php${PHP_VERSION}/php.ini && \
     echo "upload_max_filesize = 24M" >> /etc/php${PHP_VERSION}/php.ini && \
     # Create necessary directories with proper permissions
-    mkdir -p /var/lib/nginx /var/log/nginx /var/log/phpbb /run/nginx /run/php-fpm && \
+    mkdir -p /var/lib/nginx /var/log/nginx /var/log/phpbb /run/nginx /run/php-fpm/conf.d && \
     chown -R phpbb:phpbb /var/lib/nginx /var/log/nginx /var/log/phpbb /run/nginx /run/php-fpm && \
     touch /run/nginx.pid && \
     chown phpbb:phpbb /run/nginx.pid
