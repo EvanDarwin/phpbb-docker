@@ -35,6 +35,7 @@ ENV PHPBB_FORUM_NAME="My phpBB Forum" \
     SERVER_PORT="8080" \
     SCRIPT_PATH="/" \
     COOKIE_SECURE="false" \
+    PHPBB_DEBUG="false" \
     TRUSTED_PROXIES="" \
     CONTENT_SECURITY_POLICY="" \
     PHP_MEMORY_LIMIT="128M" \
@@ -191,6 +192,9 @@ RUN set -e; \
     chown phpbb:phpbb /var/cache/phpbb "${PHPBB_ROOT}" "${PHPBB_ROOT}/phpbb"; \
     chmod 1777 /var/cache/phpbb; \
     echo "phpBB ${PHPBB_VERSION} installed at ${PHPBB_CODE}"
+
+# phpBB's debug environment for PHPBB_DEBUG, read-only like the rest of its code
+COPY config/phpbb-debug/ ${PHPBB_CODE}/config/debug/
 
 # Set proper permissions for the scripts
 RUN chmod 755 /opt/.docker/*.sh && \

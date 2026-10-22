@@ -1,0 +1,15 @@
+imports:
+  - { resource: ../production/config.yml }
+
+core:
+  debug:
+    exceptions: true
+    load_time: true
+    sql_explain: true
+    memory: true
+    show_errors: true
+    error_handler: true
+  twig:
+    debug: true
+    auto_reload: true
+    enable_debug_extension: true

@@ -639,7 +639,11 @@ setup_log_forwarding() {
 # Start PHP-FPM service with better monitoring
 start_php_fpm() {
   log "Starting PHP-FPM..."
-  php-fpm${PHP_VERSION} -F &
+  # PHPBB_DEBUG runs the board in phpBB's debug environment; the command-line installer
+  # and upgrader stay in production
+  local debug=""
+  [ "${PHPBB_DEBUG:-false}" != true ] || debug="auto_prepend_file=$PHPBB_CODE/config/debug/environment.php"
+  php-fpm${PHP_VERSION} -F ${debug:+-d "$debug"} &
   PHP_FPM_PID=$!
 
   # Check if PHP-FPM started successfully with a proper timeout

@@ -111,6 +111,13 @@ check_eq "PHP_CUSTOM_INI sets PHP-FPM's settings, over PHP_MEMORY_LIMIT" "256M 4
 check_eq "and nginx's body limit follows" "client_max_body_size 50331648;" \
   "$(docker exec "$(c phpini)" cat /run/nginx/client-max-body-size.conf)"
 
+echo "Debug mode"
+check_lacks "off by default" "Peak Memory Usage" "$(docker exec "$(c web)" curl -s http://localhost:8080/)"
+start debug "$IMAGE" -e PHPBB_PASSWORD="$T_PASSWORD" -e PHPBB_DEBUG=true
+check_has "PHPBB_DEBUG=true shows phpBB's debug output" "Peak Memory Usage" "$(docker exec "$(c debug)" curl -s http://localhost:8080/)"
+check_eq "and the board still works" 2 "$(login debug admin "$T_PASSWORD")"
+check_eq "its environment file isn't served" 403 "$(http_code debug /config/debug/environment.php)"
+
 echo "Logs"
 docker exec "$(c web)" curl -s -o /dev/null http://127.0.0.1:8080/log-probe
 sleep 2

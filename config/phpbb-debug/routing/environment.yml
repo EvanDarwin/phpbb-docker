@@ -1,0 +1,2 @@
+core.production:
+  resource: ../../production/routing/environment.yml
