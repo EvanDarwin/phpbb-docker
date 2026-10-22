@@ -138,8 +138,6 @@ jobs:
           build-args: |
             PHPBB_VERSION=${{ steps.phpbb-version.outputs.version }}
             PHP_VERSION=84
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
           provenance: true
           sbom: true
           platforms: linux/amd64,linux/arm64
