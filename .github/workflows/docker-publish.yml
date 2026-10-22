@@ -5,7 +5,7 @@ on:
     branches:
       - main
   pull_request:
-    branches: 
+    branches:
       - main
   workflow_dispatch:
   schedule:
@@ -19,21 +19,73 @@ concurrency:
 
 env:
   IMAGE_NAME: evandarwin/phpbb
+  # Every stable phpBB release from this one on is built and published
+  MIN_PHPBB_VERSION: 3.3.15
 
 jobs:
+  # The stable phpBB releases to build, from MIN_PHPBB_VERSION on: only release-X.Y.Z tags
+  # count, so alphas, betas and release candidates are never built
+  versions:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    outputs:
+      matrix: ${{ steps.versions.outputs.matrix }}
+
+    # Only run scheduled jobs on the main repository
+    if: >-
+      github.event_name != 'schedule' ||
+      (github.event_name == 'schedule' && github.repository == 'EvanDarwin/phpbb-docker')
+
+    steps:
+      - name: List the phpBB versions to build
+        id: versions
+        run: |
+          # Every release tag, without the API's paging or rate limit
+          if ! TAGS=$(git ls-remote --tags --refs https://github.com/phpbb/phpbb.git 'release-*'); then
+            echo "::error::Failed to fetch phpBB tags"
+            exit 1
+          fi
+          # Each version with its PHP (8.4 for phpBB 3, 8.5 from phpBB 4) and whether it's
+          # the newest of its minor, of its major and overall, which decides its moving tags
+          echo "$TAGS" | python3 -c '
+          import json, os, re, sys
+          minimum = tuple(int(part) for part in os.environ["MIN_PHPBB_VERSION"].split("."))
+          versions = sorted({tuple(int(part) for part in match.groups()) for match in
+                             (re.search(r"refs/tags/release-(\d+)\.(\d+)\.(\d+)$", line) for line in sys.stdin)
+                             if match})
+          versions = [version for version in versions if version >= minimum]
+          if not versions:
+              print("::error::Could not find a stable phpBB release in phpBB tags")
+              sys.exit(1)
+          newest_in_minor = {version[:2]: version for version in versions}
+          newest_in_major = {version[:1]: version for version in versions}
+          include = [{
+              "version": "%d.%d.%d" % version,
+              "minor": "%d.%d" % version[:2],
+              "major": "%d" % version[0],
+              "php": "8.4" if version[0] < 4 else "8.5",
+              "newest_in_minor": newest_in_minor[version[:2]] == version,
+              "newest_in_major": newest_in_major[version[:1]] == version,
+              "newest": versions[-1] == version,
+          } for version in versions]
+          for entry in include:
+              print("[docker-phpbb] phpBB %(version)s on PHP %(php)s" % entry)
+          with open(os.environ["GITHUB_OUTPUT"], "a") as output:
+              output.write("matrix=" + json.dumps({"include": include}) + "\n")
+          '
+
   build:
+    needs: versions
     runs-on: ubuntu-latest
     permissions:
       contents: read
       packages: write
       id-token: write # Required for SLSA provenance
-    outputs:
-      digest: ${{ steps.build-and-push.outputs.digest }}
-
-    # Only run scheduled jobs on the main repository
-    if: >-
-      github.event_name != 'schedule' || 
-      (github.event_name == 'schedule' && github.repository == 'EvanDarwin/phpbb-docker')
+      security-events: write # For the Docker Scout results
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.versions.outputs.matrix) }}
 
     steps:
       - name: Checkout repository
@@ -51,76 +103,20 @@ jobs:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
 
-      # Extract metadata (tags, labels) for Docker
+      # Extract metadata (tags, labels) for Docker: every version gets its own tag, and the
+      # moving tags go to the newest version they cover
       - name: Extract Docker metadata
         id: meta
         uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302 # v6.2.0
         with:
           images: ${{ env.IMAGE_NAME }}
           tags: |
-            type=semver,pattern={{version}}
-            type=semver,pattern={{major}}.{{minor}}
-            type=semver,pattern={{major}}
-            type=ref,event=branch
+            type=raw,value=${{ matrix.version }}
+            type=raw,value=${{ matrix.minor }},enable=${{ matrix.newest_in_minor }}
+            type=raw,value=${{ matrix.major }},enable=${{ matrix.newest_in_major }}
+            type=ref,event=branch,enable=${{ matrix.newest }}
             type=ref,event=pr
-            type=raw,value=latest,enable={{is_default_branch}}
-
-      # Get the newest stable phpBB release for auto tagging: only release-X.Y.Z tags count,
-      # so alphas, betas and release candidates are never built
-      - name: Get latest phpBB version
-        id: phpbb-version
-        run: |
-          # Every release tag, without the API's paging or rate limit
-          if ! TAGS=$(git ls-remote --tags --refs https://github.com/phpbb/phpbb.git 'release-*'); then
-            echo "::error::Failed to fetch phpBB tags"
-            exit 1
-          else
-            VERSION=$(echo "$TAGS" | \
-              grep -oE 'release-[0-9]+\.[0-9]+\.[0-9]+$' | \
-              sed 's/^release-//' | \
-              sort -V | \
-              tail -1 || true)
-
-            # If we successfully found a version, parse it
-            if [[ -n "$VERSION" ]]; then
-              echo "version=${VERSION}" >> $GITHUB_OUTPUT
-              
-              # Extract major and minor versions for tagging
-              VERSION_MAJOR=$(echo $VERSION | cut -d. -f1)
-              VERSION_MINOR=$(echo $VERSION | cut -d. -f2)
-              
-              echo "version_major=${VERSION_MAJOR}" >> $GITHUB_OUTPUT
-              echo "version_minor=${VERSION_MINOR}" >> $GITHUB_OUTPUT
-              echo "[docker-phpbb] Found phpBB version: ${VERSION} (${VERSION_MAJOR}.${VERSION_MINOR})"
-            else
-              echo "::error::Could not find a stable phpBB release in phpBB's tags"
-              exit 1
-            fi
-          fi
-      
-      # Set the PHP version and prepare tag format
-      - name: Set image name with PHP and phpBB versions
-        id: image-name
-        run: |
-          PHP_VERSION=84
-          PHPBB_VERSION="${{ steps.phpbb-version.outputs.version }}"
-          PHPBB_VERSION_MAJOR="${{ steps.phpbb-version.outputs.version_major }}"
-          PHPBB_VERSION_MINOR="${{ steps.phpbb-version.outputs.version_minor }}"
-          
-          # Generate version-specific image name
-          VERSIONED_IMAGE="${{ env.IMAGE_NAME }}:${PHPBB_VERSION}"
-          MAJOR_VERSION_TAG="${{ env.IMAGE_NAME }}:${PHPBB_VERSION_MAJOR}"
-          MINOR_VERSION_TAG="${{ env.IMAGE_NAME }}:${PHPBB_VERSION_MAJOR}.${PHPBB_VERSION_MINOR}"
-          
-          # Add custom tags
-          echo "versioned_image=${VERSIONED_IMAGE}" >> $GITHUB_OUTPUT
-          echo "major_version_tag=${MAJOR_VERSION_TAG}" >> $GITHUB_OUTPUT
-          echo "minor_version_tag=${MINOR_VERSION_TAG}" >> $GITHUB_OUTPUT
-          
-          # For debugging
-          echo "Setting image tag: ${VERSIONED_IMAGE}"
-          echo "Major version tag: ${MAJOR_VERSION_TAG}"
-          echo "Minor version tag: ${MINOR_VERSION_TAG}"
+            type=raw,value=latest,enable=${{ matrix.newest && github.ref_name == github.event.repository.default_branch }}
 
       # Build and push Docker image with Buildx
       - name: Build and push Docker image
@@ -129,35 +125,23 @@ jobs:
         with:
           context: .
           push: ${{ github.event_name != 'pull_request' }}
-          tags: |
-            ${{ steps.meta.outputs.tags }}
-            ${{ steps.image-name.outputs.versioned_image }}
-            ${{ steps.image-name.outputs.major_version_tag }}
-            ${{ steps.image-name.outputs.minor_version_tag }}
+          tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           build-args: |
-            PHPBB_VERSION=${{ steps.phpbb-version.outputs.version }}
-            PHP_VERSION=84
+            PHPBB_VERSION=${{ matrix.version }}
+            PHP_VERSION=${{ matrix.php }}
           provenance: true
           sbom: true
           platforms: linux/amd64,linux/arm64
 
-  # Fixable critical and high vulnerabilities in the image just pushed, reported to the
-  # Security tab without failing the run
-  scan:
-    needs: build
-    if: github.event_name != 'pull_request'
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-      security-events: write
-
-    steps:
+      # Fixable critical and high vulnerabilities in the image just pushed, reported to the
+      # Security tab without failing the run
       - name: Scan the image with Docker Scout
+        if: github.event_name != 'pull_request'
         uses: docker/scout-action@a4119c5a8c5076236a54e4ce99531f7e4dd2ef84 # v1.27.0
         with:
           command: cves
-          image: registry://${{ env.IMAGE_NAME }}@${{ needs.build.outputs.digest }}
+          image: registry://${{ env.IMAGE_NAME }}@${{ steps.build-and-push.outputs.digest }}
           only-severities: critical,high
           only-fixed: true
           sarif-file: scout.sarif
@@ -165,6 +149,8 @@ jobs:
           dockerhub-password: ${{ secrets.DOCKERHUB_TOKEN }}
 
       - name: Upload the results to the Security tab
+        if: github.event_name != 'pull_request'
         uses: github/codeql-action/upload-sarif@9b3254085494b55a0f7c4c2b3d2d52cc712ce370 # v4.39.1
         with:
           sarif_file: scout.sarif
+          category: phpbb-${{ matrix.version }}
