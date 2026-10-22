@@ -27,6 +27,8 @@ jobs:
       contents: read
       packages: write
       id-token: write # Required for SLSA provenance
+    outputs:
+      digest: ${{ steps.build-and-push.outputs.digest }}
 
     # Only run scheduled jobs on the main repository
     if: >-
@@ -144,3 +146,30 @@ jobs:
           provenance: true
           sbom: true
           platforms: linux/amd64,linux/arm64
+
+  # Fixable critical and high vulnerabilities in the image just pushed, reported to the
+  # Security tab without failing the run
+  scan:
+    needs: build
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      security-events: write
+
+    steps:
+      - name: Scan the image with Docker Scout
+        uses: docker/scout-action@a4119c5a8c5076236a54e4ce99531f7e4dd2ef84 # v1.27.0
+        with:
+          command: cves
+          image: registry://${{ env.IMAGE_NAME }}@${{ needs.build.outputs.digest }}
+          only-severities: critical,high
+          only-fixed: true
+          sarif-file: scout.sarif
+          dockerhub-user: ${{ secrets.DOCKERHUB_USERNAME }}
+          dockerhub-password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Upload the results to the Security tab
+        uses: github/codeql-action/upload-sarif@9b3254085494b55a0f7c4c2b3d2d52cc712ce370 # v4.39.1
+        with:
+          sarif_file: scout.sarif
