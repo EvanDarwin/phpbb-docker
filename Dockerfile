@@ -1,9 +1,12 @@
-FROM alpine:edge
+FROM alpine:3.24
 
 ARG PHPBB_VERSION
-ENV PHP_VERSION="${PHP_VERSION:-8.4}"
+ARG PHP_VERSION=8.4
 ENV PHP_VERSION="${PHP_VERSION/./}"
 ENV PHPBB_ROOT="/opt/phpbb"
+ENV PHPBB_CODE="/var/www/phpbb"
+ENV PHPBB_DIST="/usr/share/phpbb-dist"
+ENV PHPBB_LEGACY_BASE="/usr/share/phpbb-legacy-base"
 ENV PHPBB_VERSION="${PHPBB_VERSION}"
 
 # phpBB configuration environment variables
@@ -11,8 +14,6 @@ ENV PHPBB_FORUM_NAME="My phpBB Forum" \
     PHPBB_FORUM_DESCRIPTION="A phpBB Forum" \
     PHPBB_USERNAME="admin" \
     PHPBB_PASSWORD="" \
-    PHPBB_FIRST_NAME="Admin" \
-    PHPBB_LAST_NAME="User" \
     PHPBB_EMAIL="admin@example.com" \
     PHPBB_DATABASE_DRIVER="sqlite3" \
     PHPBB_DATABASE_SQLITE_PATH="${PHPBB_ROOT}/phpbb.sqlite" \
@@ -26,12 +27,14 @@ ENV PHPBB_FORUM_NAME="My phpBB Forum" \
     SMTP_PORT="25" \
     SMTP_USER="" \
     SMTP_PASSWORD="" \
-    SMTP_PROTOCOL="" \
     SERVER_PROTOCOL="http://" \
     SERVER_NAME="localhost" \
     SERVER_PORT="8080" \
     SCRIPT_PATH="/" \
     COOKIE_SECURE="false" \
+    PHPBB_DEBUG="false" \
+    TRUSTED_PROXIES="" \
+    CONTENT_SECURITY_POLICY="" \
     PHP_MEMORY_LIMIT="128M" \
     PHP_CUSTOM_INI=""
 
@@ -43,10 +46,11 @@ RUN addgroup -S phpbb && \
 
 # Group packages by functionality for better organization and layer efficiency
 RUN apk update && \
+    # OPcache is built into PHP from 8.5; earlier versions ship it as a package
+    opcache=$([ "$PHP_VERSION" -ge 85 ] || echo "php${PHP_VERSION}-opcache") && \
     # Core PHP packages
     apk add --virtual .php-deps --no-cache \
     php${PHP_VERSION} \
-    php${PHP_VERSION}-cli \
     php${PHP_VERSION}-fpm \
     # Database drivers
     php${PHP_VERSION}-pdo \
@@ -61,14 +65,13 @@ RUN apk update && \
     php${PHP_VERSION}-curl \
     php${PHP_VERSION}-mbstring \
     php${PHP_VERSION}-sodium \
-    php${PHP_VERSION}-json \
     php${PHP_VERSION}-xml \
     php${PHP_VERSION}-zip \
     php${PHP_VERSION}-exif \
     php${PHP_VERSION}-fileinfo \
     php${PHP_VERSION}-dom \
     # Performance and security
-    php${PHP_VERSION}-opcache \
+    $opcache \
     php${PHP_VERSION}-session \
     php${PHP_VERSION}-simplexml \
     php${PHP_VERSION}-ctype \
@@ -80,8 +83,8 @@ RUN apk update && \
     apk add --no-cache \
     nginx \
     curl \
+    diffutils \
     unzip \
-    libcap \
     ca-certificates \
     mysql-client \
     postgresql-client \
@@ -89,14 +92,23 @@ RUN apk update && \
     # Cleanup to reduce layer size
     rm -rf /var/cache/apk/*
 
+# PHP also reads the settings the entrypoint writes from PHP_MEMORY_LIMIT and
+# PHP_CUSTOM_INI, after its own conf.d (which the leading colon keeps)
+ENV PHP_INI_SCAN_DIR=":/run/php-fpm/conf.d"
+
 # Configure PHP-FPM and security settings
 RUN sed -i "s/user = nobody/user = phpbb/g" /etc/php${PHP_VERSION}/php-fpm.d/www.conf && \
     sed -i "s/group = nobody/group = phpbb/g" /etc/php${PHP_VERSION}/php-fpm.d/www.conf && \
-    sed -i "s/;listen.owner = nobody/listen.owner = phpbb/g" /etc/php${PHP_VERSION}/php-fpm.d/www.conf && \
-    sed -i "s/;listen.group = nobody/listen.group = phpbb/g" /etc/php${PHP_VERSION}/php-fpm.d/www.conf && \
     echo "security.limit_extensions = .php" >> /etc/php${PHP_VERSION}/php-fpm.d/www.conf && \
-    # Allow nginx to bind to privileged ports
-    setcap cap_net_bind_service=+ep /usr/sbin/nginx && \
+    echo "ping.path = /fpm-ping" >> /etc/php${PHP_VERSION}/php-fpm.d/www.conf && \
+    sed -i "s|^listen = 127.0.0.1:9000$|listen = /run/php-fpm/php-fpm.sock|" /etc/php${PHP_VERSION}/php-fpm.d/www.conf && \
+    grep -q "^listen = /run/php-fpm/php-fpm.sock$" /etc/php${PHP_VERSION}/php-fpm.d/www.conf && \
+    # Logs go to links the entrypoint points at /var/log/phpbb, or at the container's
+    # output when that can't be written
+    sed -i "s|^;error_log = log/php${PHP_VERSION}/error.log$|error_log = /run/php-fpm/error.log|" /etc/php${PHP_VERSION}/php-fpm.conf && \
+    grep -q "^error_log = /run/php-fpm/error.log$" /etc/php${PHP_VERSION}/php-fpm.conf && \
+    sed -i "s|/var/log/nginx/error.log|/run/nginx/error.log|; s|/var/log/nginx/access.log|/run/nginx/access.log|" /etc/nginx/nginx.conf && \
+    ! grep -q "/var/log/nginx/" /etc/nginx/nginx.conf && \
     # Optimize PHP with opcache for better performance
     echo "opcache.memory_consumption=128" >> /etc/php${PHP_VERSION}/conf.d/00_opcache.ini && \
     echo "opcache.interned_strings_buffer=8" >> /etc/php${PHP_VERSION}/conf.d/00_opcache.ini && \
@@ -108,73 +120,95 @@ RUN sed -i "s/user = nobody/user = phpbb/g" /etc/php${PHP_VERSION}/php-fpm.d/www
     echo "opcache.save_comments=1" >> /etc/php${PHP_VERSION}/conf.d/00_opcache.ini && \
     # Set PHP security configuration
     echo "disable_functions = exec,passthru,shell_exec,system,proc_open,popen,curl_exec,curl_multi_exec,parse_ini_file,show_source,eval" >> /etc/php${PHP_VERSION}/php.ini && \
-    echo "open_basedir = ${PHPBB_ROOT}:/tmp" >> /etc/php${PHP_VERSION}/php.ini && \
+    echo "open_basedir = ${PHPBB_CODE}:${PHPBB_ROOT}:/var/cache/phpbb:/tmp" >> /etc/php${PHP_VERSION}/php.ini && \
     echo "expose_php = Off" >> /etc/php${PHP_VERSION}/php.ini && \
     echo "max_execution_time = 30" >> /etc/php${PHP_VERSION}/php.ini && \
     echo "memory_limit = 128M" >> /etc/php${PHP_VERSION}/php.ini && \
     echo "post_max_size = 32M" >> /etc/php${PHP_VERSION}/php.ini && \
     echo "upload_max_filesize = 24M" >> /etc/php${PHP_VERSION}/php.ini && \
     # Create necessary directories with proper permissions
-    mkdir -p /var/lib/nginx /var/log/nginx /var/log/php${PHP_VERSION} /run/nginx && \
-    chown -R phpbb:phpbb /var/lib/nginx /var/log/nginx /var/log/php${PHP_VERSION} /run/nginx && \
+    mkdir -p /var/lib/nginx /var/log/nginx /var/log/phpbb /run/nginx /run/php-fpm/conf.d && \
+    chown -R phpbb:phpbb /var/lib/nginx /var/log/nginx /var/log/phpbb /run/nginx /run/php-fpm && \
+    # Writable by whichever user the container runs as (--user), like /tmp
+    chmod 755 /var/lib/nginx && \
+    chmod 1777 /var/lib/nginx/tmp /var/log/nginx /var/log/phpbb /run/nginx /run/php-fpm /run/php-fpm/conf.d && \
     touch /run/nginx.pid && \
     chown phpbb:phpbb /run/nginx.pid
 
 # Copy scripts and configurations
-COPY scripts/install-phpbb.sh scripts/docker-entrypoint.sh scripts/install-from-yml.sh /opt/.docker/
+COPY scripts/docker-entrypoint.sh scripts/install-from-yml.sh scripts/update-cloudflare-ips.sh /opt/.docker/
 COPY config/nginx.conf /etc/nginx/http.d/default.conf
+COPY patches/ /tmp/phpbb-patches/
 
-# Download and install phpBB during the build
-RUN if [ -z "${PHPBB_VERSION}" ]; then \
-    echo "ERROR: PHPBB_VERSION build argument is not set" && exit 1; \
-    fi && \
-    echo "Installing phpBB version: ${PHPBB_VERSION}" && \
-    # Extract major.minor version from the full version
-    MAJOR_MINOR_VERSION=$(echo "${PHPBB_VERSION}" | grep -oE '^[0-9]+\.[0-9]+') && \
-    if [ -z "${MAJOR_MINOR_VERSION}" ]; then \
-    echo "ERROR: Could not extract major.minor version from ${PHPBB_VERSION}" && exit 1; \
-    fi && \
-    # Download and extract phpBB
-    DOWNLOAD_URL="https://download.phpbb.com/pub/release/${MAJOR_MINOR_VERSION}/${PHPBB_VERSION}/phpBB-${PHPBB_VERSION}.zip" && \
-    echo "Downloading from: ${DOWNLOAD_URL}" && \
-    cd /tmp && \
-    curl -L -o phpbb.zip "${DOWNLOAD_URL}" && \
-    unzip phpbb.zip && \
-    rm phpbb.zip && \
-    # Move files to destination and set up directories
-    mkdir -p ${PHPBB_ROOT}/phpbb && \
-    mv "phpBB3"/* ${PHPBB_ROOT}/phpbb/ && \
-    rm -rf "phpBB3" && \
-    mkdir -p ${PHPBB_ROOT}/phpbb/config && \
-    touch ${PHPBB_ROOT}/phpbb/config/config.php && \
-    chown -R phpbb:phpbb ${PHPBB_ROOT} && \
-    # Set base permissions
-    chmod -v 0750 ${PHPBB_ROOT} ${PHPBB_ROOT}/phpbb ${PHPBB_ROOT}/phpbb/* && \
-    mkdir -p ${PHPBB_ROOT}/phpbb/images/avatars/uploads && \
-    # Set writable directory permissions
-    chmod -v 0770 ${PHPBB_ROOT}/phpbb/store ${PHPBB_ROOT}/phpbb/cache ${PHPBB_ROOT}/phpbb/files ${PHPBB_ROOT}/phpbb/images/avatars/uploads/ && \
-    chmod 0640 ${PHPBB_ROOT}/phpbb/config/config.php && \
-    # Set subdirectory permissions
-    find ${PHPBB_ROOT}/phpbb/cache -type d -exec chmod 750 {} \; && \
-    find ${PHPBB_ROOT}/phpbb/store -type d -exec chmod 750 {} \; 2>/dev/null || true && \
-    find ${PHPBB_ROOT}/phpbb/files -type d -exec chmod 750 {} \; 2>/dev/null || true && \
-    # Make vendor directory read-only for security
-    if [ -d "${PHPBB_ROOT}/phpbb/vendor" ]; then \
-    chmod -R 555 "${PHPBB_ROOT}/phpbb/vendor" && \
-    echo "SECURITY: Vendor directory is now properly protected (read-only)"; \
-    fi && \
-    echo "phpBB ${PHPBB_VERSION} has been installed successfully!"
+# Install phpBB's code read-only (owned by root) at PHPBB_CODE. Everything a board
+# writes lives on the PHPBB_ROOT volume, in the same layout earlier versions of this
+# image used, and is linked into the code tree. Pristine copies of those files are
+# kept in PHPBB_DIST to populate new volumes and to merge phpBB's updated styles,
+# language packs, extensions and images into the volume on upgrade. Every earlier
+# image of this project shipped phpBB 3.3.15, so that release's pristine copies are
+# kept in PHPBB_LEGACY_BASE as the merge base for their volumes. The cache stays in
+# the container.
+RUN set -e; \
+    if [ -z "${PHPBB_VERSION}" ]; then echo "ERROR: PHPBB_VERSION build argument is not set"; exit 1; fi; \
+    MAJOR_MINOR_VERSION=$(echo "${PHPBB_VERSION}" | grep -oE '^[0-9]+\.[0-9]+'); \
+    DOWNLOAD_URL="https://download.phpbb.com/pub/release/${MAJOR_MINOR_VERSION}/${PHPBB_VERSION}/phpBB-${PHPBB_VERSION}.zip"; \
+    echo "Downloading from: ${DOWNLOAD_URL}"; \
+    cd /tmp; \
+    curl -fsSL -o phpbb.zip "${DOWNLOAD_URL}"; \
+    unzip -q phpbb.zip; \
+    rm phpbb.zip; \
+    test -f phpBB3/index.php; \
+    mkdir -p "$(dirname "${PHPBB_CODE}")" "${PHPBB_DIST}"; \
+    mv phpBB3 "${PHPBB_CODE}"; \
+    # Fixes to phpBB for this image's layout; the build fails unless each applies exactly
+    apk add --no-cache --virtual .patch patch; \
+    for p in /tmp/phpbb-patches/*.patch; do patch -p1 --forward --fuzz=0 -d "${PHPBB_CODE}" < "$p"; done; \
+    apk del .patch; \
+    rm -rf /tmp/phpbb-patches; \
+    for item in store files images ext styles language config.php; do mv "${PHPBB_CODE}/$item" "${PHPBB_DIST}/$item"; done; \
+    rm -rf "${PHPBB_CODE}/cache"; \
+    LEGACY_BASE_VERSION=3.3.15; \
+    mkdir -p "${PHPBB_LEGACY_BASE}"; \
+    if [ "${PHPBB_VERSION}" = "${LEGACY_BASE_VERSION}" ]; then \
+      for dir in styles language ext images; do cp -R "${PHPBB_DIST}/$dir" "${PHPBB_LEGACY_BASE}/$dir"; done; \
+    else \
+      curl -fsSL -o legacy.zip "https://download.phpbb.com/pub/release/3.3/${LEGACY_BASE_VERSION}/phpBB-${LEGACY_BASE_VERSION}.zip"; \
+      unzip -q legacy.zip 'phpBB3/styles/*' 'phpBB3/language/*' 'phpBB3/ext/*' 'phpBB3/images/*'; \
+      for dir in styles language ext images; do mv "phpBB3/$dir" "${PHPBB_LEGACY_BASE}/$dir"; done; \
+      rm -rf legacy.zip phpBB3; \
+    fi; \
+    echo "${LEGACY_BASE_VERSION}" > "${PHPBB_LEGACY_BASE}/VERSION"; \
+    # The board can't remove install/ from read-only code, so phpBB is told to allow it;
+    # nginx denies /install/ instead, leaving the installer reachable only from the CLI
+    printf '\ncore:\n    allow_install_dir: true\n' >> "${PHPBB_CODE}/config/production/config.yml"; \
+    chown -R root:root "${PHPBB_CODE}" "${PHPBB_DIST}" "${PHPBB_LEGACY_BASE}"; \
+    chmod -R u=rwX,go=rX "${PHPBB_CODE}" "${PHPBB_DIST}" "${PHPBB_LEGACY_BASE}"; \
+    for item in store files images ext styles language config.php; do ln -s "${PHPBB_ROOT}/phpbb/$item" "${PHPBB_CODE}/$item"; done; \
+    ln -s /var/cache/phpbb "${PHPBB_CODE}/cache"; \
+    mkdir -p /var/cache/phpbb "${PHPBB_ROOT}/phpbb"; \
+    chown phpbb:phpbb /var/cache/phpbb "${PHPBB_ROOT}" "${PHPBB_ROOT}/phpbb"; \
+    chmod 1777 /var/cache/phpbb; \
+    echo "phpBB ${PHPBB_VERSION} installed at ${PHPBB_CODE}"
+
+# phpBB's debug environment for PHPBB_DEBUG, read-only like the rest of its code
+COPY config/phpbb-debug/ ${PHPBB_CODE}/config/debug/
 
 # Set proper permissions for the scripts
 RUN chmod 755 /opt/.docker/*.sh && \
     chown -R root:phpbb /opt/.docker && \
-    chmod 750 /opt/.docker && \
+    chmod 755 /opt/.docker && \
+    # Cloudflare's IP ranges for TRUSTED_PROXIES=cloudflare, refreshed at boot when stale
+    mkdir -p /usr/share/phpbb-docker && \
+    /opt/.docker/update-cloudflare-ips.sh /usr/share/phpbb-docker/cloudflare-ips && \
     # Create SQLite database file with proper permissions
     touch ${PHPBB_ROOT}/phpbb.sqlite && \
     chown phpbb:phpbb ${PHPBB_ROOT}/phpbb.sqlite && \
     chmod 0640 ${PHPBB_ROOT}/phpbb.sqlite && \
     # Cleanup unnecessary files
     rm -rf /tmp/* /var/cache/apk/*
+
+# Board data must survive container recreation, even when no volume is given
+VOLUME ["/opt/phpbb"]
 
 # Set working directory
 WORKDIR ${PHPBB_ROOT}
@@ -184,7 +218,7 @@ EXPOSE 8080
 
 # Add healthcheck to verify the service is running
 HEALTHCHECK --interval=30s --timeout=5s --start-period=30s --retries=3 \
-    CMD curl -f http://localhost:8080/ || exit 1
+    CMD curl -fs --unix-socket /run/nginx/health.sock http://localhost/fpm-ping || exit 1
 
 # Switch to non-root user for running the container
 USER phpbb

@@ -75,11 +75,11 @@ DOCKER_IMAGE=${DOCKER_IMAGE:-"evandarwin/phpbb"}
 log "==> Building phpBB Docker image"
 log "  phpBB version   :: $VERSION"
 log "  PHP version     :: 8.4"
-log "  Alpine version  :: edge"
+log "  Alpine version  :: 3.24"
 log "  image name      :: $DOCKER_IMAGE:$VERSION"
 
 # Set build args
-BUILD_ARGS="--build-arg PHPBB_VERSION=$VERSION --build-arg PHP_VERSION=84 --build-arg ALPINE_VERSION=edge"
+BUILD_ARGS="--build-arg PHPBB_VERSION=$VERSION --build-arg PHP_VERSION=84"
 
 # Build the Docker image
 docker build \
