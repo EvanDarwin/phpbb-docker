@@ -1,2 +1,6 @@
+# Code
 .vscode/
 node_modules/
+
+# Agents
+.claude/
