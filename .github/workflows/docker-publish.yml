@@ -65,25 +65,22 @@ jobs:
             type=ref,event=pr
             type=raw,value=latest,enable={{is_default_branch}}
 
-      # Get the latest phpBB version from GitHub for auto tagging with improved error handling
+      # Get the newest stable phpBB release for auto tagging: only release-X.Y.Z tags count,
+      # so alphas, betas and release candidates are never built
       - name: Get latest phpBB version
         id: phpbb-version
         run: |
-          # Attempt to get the latest version
-          VERSION=$(curl -s --fail https://api.github.com/repos/phpbb/phpbb/tags || echo '{"error": "Failed to fetch tags"}')
-          
-          # Check if the curl request was successful
-          if [[ "$VERSION" == *"error"* ]]; then
+          # Every release tag, without the API's paging or rate limit
+          if ! TAGS=$(git ls-remote --tags --refs https://github.com/phpbb/phpbb.git 'release-*'); then
             echo "::error::Failed to fetch phpBB tags"
             exit 1
           else
-            VERSION=$(echo "$VERSION" | \
-              grep -o '"name": "[^"]*"' | \
-              grep '"name": "release-' | \
-              grep -v 'RC' | \
-              head -1 | \
-              sed 's/"name": "release-//;s/"//g')
-            
+            VERSION=$(echo "$TAGS" | \
+              grep -oE 'release-[0-9]+\.[0-9]+\.[0-9]+$' | \
+              sed 's/^release-//' | \
+              sort -V | \
+              tail -1 || true)
+
             # If we successfully found a version, parse it
             if [[ -n "$VERSION" ]]; then
               echo "version=${VERSION}" >> $GITHUB_OUTPUT
@@ -96,7 +93,7 @@ jobs:
               echo "version_minor=${VERSION_MINOR}" >> $GITHUB_OUTPUT
               echo "[docker-phpbb] Found phpBB version: ${VERSION} (${VERSION_MAJOR}.${VERSION_MINOR})"
             else
-              echo "::error::Could not parse phpBB version from API response"
+              echo "::error::Could not find a stable phpBB release in phpBB's tags"
               exit 1
             fi
           fi
