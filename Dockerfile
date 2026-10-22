@@ -1,7 +1,7 @@
 FROM alpine:3.24
 
 ARG PHPBB_VERSION
-ENV PHP_VERSION="${PHP_VERSION:-8.4}"
+ARG PHP_VERSION=8.4
 ENV PHP_VERSION="${PHP_VERSION/./}"
 ENV PHPBB_ROOT="/opt/phpbb"
 ENV PHPBB_CODE="/var/www/phpbb"
@@ -48,10 +48,11 @@ RUN addgroup -S phpbb && \
 
 # Group packages by functionality for better organization and layer efficiency
 RUN apk update && \
+    # OPcache is built into PHP from 8.5; earlier versions ship it as a package
+    opcache=$([ "$PHP_VERSION" -ge 85 ] || echo "php${PHP_VERSION}-opcache") && \
     # Core PHP packages
     apk add --virtual .php-deps --no-cache \
     php${PHP_VERSION} \
-    php${PHP_VERSION}-cli \
     php${PHP_VERSION}-fpm \
     # Database drivers
     php${PHP_VERSION}-pdo \
@@ -66,14 +67,13 @@ RUN apk update && \
     php${PHP_VERSION}-curl \
     php${PHP_VERSION}-mbstring \
     php${PHP_VERSION}-sodium \
-    php${PHP_VERSION}-json \
     php${PHP_VERSION}-xml \
     php${PHP_VERSION}-zip \
     php${PHP_VERSION}-exif \
     php${PHP_VERSION}-fileinfo \
     php${PHP_VERSION}-dom \
     # Performance and security
-    php${PHP_VERSION}-opcache \
+    $opcache \
     php${PHP_VERSION}-session \
     php${PHP_VERSION}-simplexml \
     php${PHP_VERSION}-ctype \

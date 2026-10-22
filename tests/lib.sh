@@ -6,6 +6,9 @@
 : "${IMAGE:?IMAGE must name the image under test (tests/run.sh sets it)}"
 : "${OLD_IMAGE:?OLD_IMAGE must name an image with an older phpBB (tests/run.sh sets it)}"
 
+# The image's PHP as its binaries and config name it, e.g. 84 for php84 and /etc/php84
+PHP_VERSION=$(docker image inspect -f '{{range .Config.Env}}{{println .}}{{end}}' "$IMAGE" | sed -n 's/^PHP_VERSION=//p')
+
 # The last image published before this layout (phpBB 3.3.15, with the weak
 # password generator), kept under a tag that is never moved. The digest is what
 # docker pulls, so a moved tag can't change what the upgrade tests start from.

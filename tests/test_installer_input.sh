@@ -28,7 +28,7 @@ check_eq "board name is HTML-escaped in the page" "<h1>My &quot;Best&quot; &lt;b
   "$(docker exec "$(c hostile)" curl -s http://localhost:8080/index.php | grep -o '<h1>.*</h1>' | head -1)"
 stored=$(config_value hostile smtp_password)
 check_eq "SMTP password decodes back to the original when phpBB uses it" "s&amp;'\"\\x <y>" \
-  "$(docker exec -e S="$stored" "$(c hostile)" php84 -r 'echo html_entity_decode(getenv("S"), ENT_COMPAT);')"
+  "$(docker exec -e S="$stored" "$(c hostile)" php$PHP_VERSION -r 'echo html_entity_decode(getenv("S"), ENT_COMPAT);')"
 
 echo "COOKIE_SECURE and SERVER_PORT"
 check_eq "default COOKIE_SECURE=false stores an empty (false) setting" "" "$(config_value hostile cookie_secure)"

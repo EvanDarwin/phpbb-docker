@@ -91,16 +91,16 @@ check_eq "and a 40 MB one doesn't" 413 "$(post_size 41943040)"
 ini=$(mktemp)
 echo "post_max_size = 64M" > "$ini"
 chmod 644 "$ini"
-start bigpost "$IMAGE" -e PHPBB_PASSWORD="$T_PASSWORD" -v "$ini:/etc/php84/conf.d/99-test.ini:ro"
+start bigpost "$IMAGE" -e PHPBB_PASSWORD="$T_PASSWORD" -v "$ini:/etc/php$PHP_VERSION/conf.d/99-test.ini:ro"
 check_eq "raising post_max_size raises nginx's limit" "client_max_body_size 67108864;" \
   "$(docker exec "$(c bigpost)" cat /run/nginx/client-max-body-size.conf)"
 rm -f "$ini"
 check_has "PHP-FPM confines PHP to the board with open_basedir from php.ini" "/var/www/phpbb:/opt/phpbb:/var/cache/phpbb:/tmp" \
-  "$(docker exec "$(c web)" php-fpm84 -i | grep '^open_basedir')"
+  "$(docker exec "$(c web)" php-fpm$PHP_VERSION -i | grep '^open_basedir')"
 
 echo "PHP settings"
 # php_setting NAME SETTING: PHP-FPM's value for SETTING
-php_setting() { docker exec "$(c "$1")" php-fpm84 -i | sed -n "s/^$2 => \([^ ]*\) => .*/\1/p"; }
+php_setting() { docker exec "$(c "$1")" php-fpm$PHP_VERSION -i | sed -n "s/^$2 => \([^ ]*\) => .*/\1/p"; }
 start phpmem "$IMAGE" -e PHPBB_PASSWORD="$T_PASSWORD" -e PHP_MEMORY_LIMIT=512M
 check_eq "PHP_MEMORY_LIMIT sets PHP-FPM's memory_limit" 512M "$(php_setting phpmem memory_limit)"
 start phpini "$IMAGE" -e PHPBB_PASSWORD="$T_PASSWORD" -e PHP_MEMORY_LIMIT=512M -e "PHP_CUSTOM_INI=memory_limit = 256M
@@ -131,7 +131,8 @@ check_has "and logs to the container output instead" '"GET /log-probe HTTP' "$(l
 check "the health check passes" healthy rologs
 
 echo "Base image"
-check_has "PHP 8.4" "PHP 8.4." "$(docker exec "$(c web)" php84 -v | head -1)"
+php=$(echo "$PHP_VERSION" | sed 's/./&./')
+check_has "PHP $php, as built" "PHP $php." "$(docker exec "$(c web)" php$PHP_VERSION -v | head -1)"
 check_lacks "Alpine is a stable release, not edge" "_alpha" "$(docker exec "$(c web)" cat /etc/alpine-release)"
 check_fails "git is not installed (merges use diffutils' diff3)" docker exec "$(c web)" sh -c 'command -v git'
 
@@ -139,7 +140,7 @@ start capdrop "$IMAGE" --cap-drop ALL -e PHPBB_PASSWORD="$T_PASSWORD"
 check "runs with every capability dropped" running capdrop
 check_eq "and serves the board" 200 "$(http_code capdrop /)"
 
-docker exec "$(c web)" sh -c 'kill $(pidof php-fpm84 | tr " " "\n" | sort -n | head -1)'
+docker exec "$(c web)" sh -c 'kill $(pidof php-fpm$PHP_VERSION | tr " " "\n" | sort -n | head -1)'
 sleep 2
 check_fails "health check fails once PHP-FPM is down" healthy web
 

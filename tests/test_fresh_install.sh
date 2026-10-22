@@ -17,7 +17,7 @@ check_eq "500 passwords generated" 500 "$(wc -l < "$samples" | tr -d ' ')"
 check_eq "every one is 12 characters" 0 "$(awk 'length($0) != 12' "$samples" | wc -l | tr -d ' ')"
 check_eq "every one is printable ASCII" 0 "$(LC_ALL=C grep -c '[^!-~]' "$samples")"
 check_eq "every one fits phpBB's 30-character limit once HTML-escaped" 0 \
-  "$(docker run --rm -i --entrypoint php84 "$IMAGE" -r '$n = 0; while (($line = fgets(STDIN)) !== false) { if (strlen(htmlspecialchars(rtrim($line, "\n"), ENT_COMPAT, "UTF-8")) > 30) $n++; } echo $n;' < "$samples")"
+  "$(docker run --rm -i --entrypoint php$PHP_VERSION "$IMAGE" -r '$n = 0; while (($line = fgets(STDIN)) !== false) { if (strlen(htmlspecialchars(rtrim($line, "\n"), ENT_COMPAT, "UTF-8")) > 30) $n++; } echo $n;' < "$samples")"
 check_eq "all distinct" 500 "$(sort -u "$samples" | wc -l | tr -d ' ')"
 check_eq "the full charset is used, including & < > \" and \\" 5 "$(LC_ALL=C grep -o '[&<>"\\]' "$samples" | sort -u | wc -l | tr -d ' ')"
 rm -f "$samples"
