@@ -33,7 +33,7 @@ jobs:
     # Only run scheduled jobs on the main repository
     if: >-
       github.event_name != 'schedule' || 
-      (github.event_name == 'schedule' && github.repository == 'evandarwin/docker-phpbb')
+      (github.event_name == 'schedule' && github.repository == 'EvanDarwin/phpbb-docker')
 
     steps:
       - name: Checkout repository
