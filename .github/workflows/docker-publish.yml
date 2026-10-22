@@ -27,8 +27,6 @@ jobs:
       contents: read
       packages: write
       id-token: write # Required for SLSA provenance
-      security-events: write # For uploading SARIF results
-      actions: read
 
     # Only run scheduled jobs on the main repository
     if: >-
@@ -146,20 +144,3 @@ jobs:
           provenance: true
           sbom: true
           platforms: linux/amd64,linux/arm64
-
-      # Scan the image for vulnerabilities - with set version instead of master branch
-      - name: Scan for vulnerabilities
-        uses: aquasecurity/trivy-action@0.30.0
-        with:
-          image-ref: ${{ steps.image-name.outputs.versioned_image }}
-          format: 'sarif'
-          output: 'trivy-results.sarif'
-          severity: 'CRITICAL,HIGH'
-          timeout: '10m'
-          exit-code: '0'  # Don't fail the build on vulnerabilities
-
-      # Upload scan results to GitHub Security tab - show for all runs, including PRs
-      - name: Upload Trivy scan results to GitHub Security tab
-        uses: github/codeql-action/upload-sarif@v3
-        with:
-          sarif_file: 'trivy-results.sarif'
