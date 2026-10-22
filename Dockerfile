@@ -101,8 +101,6 @@ ENV PHP_INI_SCAN_DIR=":/run/php-fpm/conf.d"
 # Configure PHP-FPM and security settings
 RUN sed -i "s/user = nobody/user = phpbb/g" /etc/php${PHP_VERSION}/php-fpm.d/www.conf && \
     sed -i "s/group = nobody/group = phpbb/g" /etc/php${PHP_VERSION}/php-fpm.d/www.conf && \
-    sed -i "s/;listen.owner = nobody/listen.owner = phpbb/g" /etc/php${PHP_VERSION}/php-fpm.d/www.conf && \
-    sed -i "s/;listen.group = nobody/listen.group = phpbb/g" /etc/php${PHP_VERSION}/php-fpm.d/www.conf && \
     echo "security.limit_extensions = .php" >> /etc/php${PHP_VERSION}/php-fpm.d/www.conf && \
     echo "ping.path = /fpm-ping" >> /etc/php${PHP_VERSION}/php-fpm.d/www.conf && \
     sed -i "s|^listen = 127.0.0.1:9000$|listen = /run/php-fpm/php-fpm.sock|" /etc/php${PHP_VERSION}/php-fpm.d/www.conf && \
@@ -133,6 +131,9 @@ RUN sed -i "s/user = nobody/user = phpbb/g" /etc/php${PHP_VERSION}/php-fpm.d/www
     # Create necessary directories with proper permissions
     mkdir -p /var/lib/nginx /var/log/nginx /var/log/phpbb /run/nginx /run/php-fpm/conf.d && \
     chown -R phpbb:phpbb /var/lib/nginx /var/log/nginx /var/log/phpbb /run/nginx /run/php-fpm && \
+    # Writable by whichever user the container runs as (--user), like /tmp
+    chmod 755 /var/lib/nginx && \
+    chmod 1777 /var/lib/nginx/tmp /var/log/nginx /var/log/phpbb /run/nginx /run/php-fpm /run/php-fpm/conf.d && \
     touch /run/nginx.pid && \
     chown phpbb:phpbb /run/nginx.pid
 
@@ -188,13 +189,13 @@ RUN set -e; \
     ln -s /var/cache/phpbb "${PHPBB_CODE}/cache"; \
     mkdir -p /var/cache/phpbb "${PHPBB_ROOT}/phpbb"; \
     chown phpbb:phpbb /var/cache/phpbb "${PHPBB_ROOT}" "${PHPBB_ROOT}/phpbb"; \
-    chmod 750 /var/cache/phpbb; \
+    chmod 1777 /var/cache/phpbb; \
     echo "phpBB ${PHPBB_VERSION} installed at ${PHPBB_CODE}"
 
 # Set proper permissions for the scripts
 RUN chmod 755 /opt/.docker/*.sh && \
     chown -R root:phpbb /opt/.docker && \
-    chmod 750 /opt/.docker && \
+    chmod 755 /opt/.docker && \
     # Cloudflare's IP ranges for TRUSTED_PROXIES=cloudflare, refreshed at boot when stale
     mkdir -p /usr/share/phpbb-docker && \
     /opt/.docker/update-cloudflare-ips.sh /usr/share/phpbb-docker/cloudflare-ips && \

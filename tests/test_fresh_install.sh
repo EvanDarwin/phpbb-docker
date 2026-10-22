@@ -65,4 +65,29 @@ else
   echo "  skip  docker compose is not available"
 fi
 
+echo "Running as the host's user (--user)"
+# A volume owned by that user, as a bind mount from the host would be
+docker volume create "$(vol hostuser)" >/dev/null
+docker run --rm -v "$(vol hostuser):/opt/phpbb" --user root --entrypoint chown "$IMAGE" -R 1001:1001 /opt/phpbb
+start hostuser "$IMAGE" --user 1001:1001 -e PHPBB_PASSWORD="$T_PASSWORD" -v "$(vol hostuser):/opt/phpbb"
+check "container is running" running hostuser
+check "health check passes" healthy hostuser
+check_eq "admin can log in" 2 "$(login hostuser admin "$T_PASSWORD")"
+check_eq "the board's files belong to that user" "1001:1001" \
+  "$(on_volume hostuser 'stat -c %u:%g /opt/phpbb/phpbb.sqlite /opt/phpbb/phpbb/config.php /opt/phpbb/phpbb/store 2>&1' | sort -u)"
+# An existing board, moved to another user
+start olduser "$IMAGE" -e PHPBB_PASSWORD="$T_PASSWORD" -v "$(vol olduser):/opt/phpbb"
+docker rm -f "$(c olduser)" >/dev/null
+start newuser "$IMAGE" --user 1001:1001 -e PHPBB_PASSWORD="$T_PASSWORD" -v "$(vol olduser):/opt/phpbb"
+fix="docker exec -u root $(docker inspect -f '{{.Config.Hostname}}' "$(c newuser)") chown -R 1001:1001 /opt/phpbb"
+check_eq "the log gives the exact command to give that user the volume" "$fix" \
+  "$(logs newuser | sed -n 's/.*please run: //p')"
+$fix
+since=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+sleep 1
+docker restart "$(c newuser)" >/dev/null
+wait_up newuser "$since"
+check_lacks "after running it, the warning is gone" "isn't writable" "$(docker logs --since "$since" "$(c newuser)" 2>&1)"
+check_eq "and admin can log in" 2 "$(login newuser admin "$T_PASSWORD")"
+
 finish
