@@ -35,5 +35,14 @@ wait_up lost1
 check_eq "a new volume isn't installed over that board's database" 1 "$(exit_code lost1)"
 check_has "and the log says why" "config.php is missing, but the database already holds a phpBB board" "$(logs lost1)"
 check_eq "and the board is untouched" "$version" "$(db_version phpbb)"
+# A role that can reach the server but not the board's database, so the check itself fails
+docker exec "$(c db)" psql -U phpbb -d phpbb -c "CREATE ROLE outsider LOGIN PASSWORD 'outpass'; REVOKE CONNECT ON DATABASE phpbb FROM PUBLIC" >/dev/null
+launch lost2 "$IMAGE" -v "$(vol lost2):/opt/phpbb" --network "$net" -e PHPBB_DATABASE_DRIVER=postgres -e PHPBB_DATABASE_HOST="$(c db)" \
+  -e PHPBB_DATABASE_NAME=phpbb -e PHPBB_DATABASE_USER=outsider -e PHPBB_DATABASE_PASSWORD=outpass -e PHPBB_PASSWORD="$T_PASSWORD"
+wait_up lost2
+check_eq "when the check can't read the database, it isn't installed over either" 1 "$(exit_code lost2)"
+check_has "and the log says the check failed" "SQL error during migration check, install skipped:" "$(logs lost2)"
+check_has "with the database's error" "permission denied for database \"phpbb\"" "$(logs lost2)"
+check_eq "and the board is untouched" "$version" "$(db_version phpbb)"
 
 finish
