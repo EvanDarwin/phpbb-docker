@@ -29,5 +29,11 @@ check_lacks "database dumped into the backup" "Could not dump the database" "$(l
 docker exec "$(c db)" psql -U phpbb -d phpbb -c 'CREATE DATABASE restored' >/dev/null
 restore_check "the dump restores into an empty database" up1 docker exec -i "$(c db)" psql -q -v ON_ERROR_STOP=1 -U phpbb -d restored
 check_eq "the restored board is from before the upgrade" "$old_version" "$(db_version restored)"
+# shellcheck disable=SC2086
+launch lost1 "$IMAGE" -v "$(vol lost1):/opt/phpbb" $board_env -e PHPBB_PASSWORD="$T_PASSWORD"
+wait_up lost1
+check_eq "a new volume isn't installed over that board's database" 1 "$(exit_code lost1)"
+check_has "and the log says why" "config.php is missing, but the database already holds a phpBB board" "$(logs lost1)"
+check_eq "and the board is untouched" "$version" "$(db_version phpbb)"
 
 finish

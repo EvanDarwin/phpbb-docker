@@ -186,7 +186,47 @@ test_db_connection() {
       fi
       ;;
   esac
-  
+
+  return 0
+}
+
+# A database that already holds a phpBB board means config.php went missing, not that
+# this is a new install, so phpBB's installer must not run over it
+refuse_existing_board() {
+  local table="${TABLE_PREFIX}config"
+  if DB_DRIVER="$DB_DRIVER" DB_HOST="$DB_HOST" DB_PORT="$DB_PORT" DB_USER="$DB_USER" DB_PASS="$DB_PASS" \
+      DB_NAME="$DB_NAME" DB_TABLE="$table" "$PHP_EXECUTABLE" -r '
+      $table = getenv("DB_TABLE");
+      if (!preg_match("/^\\w+$/", $table)) exit(1);
+      try {
+        switch (getenv("DB_DRIVER")) {
+          case "sqlite3":
+            if (!is_file(getenv("DB_HOST")) || !filesize(getenv("DB_HOST"))) exit(1);
+            $db = new PDO("sqlite:" . getenv("DB_HOST"));
+            break;
+          case "mysqli":
+            $db = new PDO("mysql:host=" . getenv("DB_HOST") . ";port=" . (getenv("DB_PORT") ?: 3306) . ";dbname=" . getenv("DB_NAME"),
+              getenv("DB_USER"), getenv("DB_PASS"), array(PDO::ATTR_TIMEOUT => 10));
+            break;
+          case "postgres":
+            $db = new PDO("pgsql:host=" . getenv("DB_HOST") . ";port=" . (getenv("DB_PORT") ?: 5432) . ";dbname=" . getenv("DB_NAME"),
+              getenv("DB_USER"), getenv("DB_PASS"), array(PDO::ATTR_TIMEOUT => 10));
+            break;
+          default:
+            exit(1);
+        }
+        $db->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
+        $db->query("SELECT 1 FROM " . $table . " LIMIT 1");
+        exit(0);
+      } catch (Exception $e) {
+        exit(1);
+      }' 2>/dev/null; then
+    log "ERROR: ${PHPBB_ROOT}/phpbb/config.php is missing, but the database already holds a phpBB board"
+    log "       (its $table table exists), so the image won't install a new one over it."
+    log "       Restore config.php to ${PHPBB_ROOT}/phpbb/config.php, or check that the board's volume is"
+    log "       mounted at ${PHPBB_ROOT}."
+    return 1
+  fi
   return 0
 }
 
@@ -252,6 +292,7 @@ fi
 # Validate database config and test connection before installation
 validate_db_config || exit 1
 test_db_connection || exit 1
+refuse_existing_board || exit 1
 
 # Convert a value the way phpBB's request layer converts form input, using phpBB's
 # own type_cast_helper (newlines normalized, HTML-escaped, NFC-normalized, trimmed
