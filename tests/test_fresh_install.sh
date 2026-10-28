@@ -90,4 +90,14 @@ wait_up newuser "$since"
 check_lacks "after running it, the warning is gone" "isn't writable" "$(docker logs --since "$since" "$(c newuser)" 2>&1)"
 check_eq "and admin can log in" 2 "$(login newuser admin "$T_PASSWORD")"
 
+echo "A board whose config.php is gone"
+start gone "$IMAGE" -e PHPBB_PASSWORD="$T_PASSWORD" -v "$(vol gone):/opt/phpbb"
+docker rm -f "$(c gone)" >/dev/null
+on_volume gone 'rm /opt/phpbb/phpbb/config.php'
+launch gone2 "$IMAGE" -e PHPBB_PASSWORD="$T_PASSWORD" -v "$(vol gone):/opt/phpbb"
+wait_up gone2
+check_eq "isn't installed over" 1 "$(exit_code gone2)"
+check_has "and the log says why" "config.php is missing, but the database already holds a phpBB board" "$(logs gone2)"
+check_fails "and no empty config.php is left behind" on_volume gone 'test -e /opt/phpbb/phpbb/config.php'
+
 finish

@@ -186,8 +186,65 @@ test_db_connection() {
       fi
       ;;
   esac
-  
+
   return 0
+}
+
+# A database that already holds a phpBB board means config.php went missing, not that
+# this is a new install, so phpBB's installer must not run over it
+refuse_existing_board() {
+  local table="${TABLE_PREFIX}config" error
+  # Exit 0: the board's config table exists. 2: it (or its database) doesn't. Anything
+  # else: the check itself failed, and the output is the database's error.
+  error=$(DB_DRIVER="$DB_DRIVER" DB_HOST="$DB_HOST" DB_PORT="$DB_PORT" DB_USER="$DB_USER" DB_PASS="$DB_PASS" \
+      DB_NAME="$DB_NAME" DB_TABLE="$table" "$PHP_EXECUTABLE" -r '
+      $table = getenv("DB_TABLE");
+      $options = array(PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION, PDO::ATTR_TIMEOUT => 10);
+      try {
+        switch (getenv("DB_DRIVER")) {
+          case "sqlite3":
+            if (!is_file(getenv("DB_HOST")) || !filesize(getenv("DB_HOST"))) exit(2);
+            $db = new PDO("sqlite:" . getenv("DB_HOST"), null, null, $options);
+            $query = $db->prepare("SELECT count(*) FROM sqlite_master WHERE type = ? AND name = ?");
+            $query->execute(array("table", $table));
+            break;
+          case "mysqli":
+            $db = new PDO("mysql:host=" . getenv("DB_HOST") . ";port=" . (getenv("DB_PORT") ?: 3306),
+              getenv("DB_USER"), getenv("DB_PASS"), $options);
+            $query = $db->prepare("SELECT count(*) FROM information_schema.tables WHERE table_schema = ? AND table_name = ?");
+            $query->execute(array(getenv("DB_NAME"), $table));
+            break;
+          case "postgres":
+            $dsn = "pgsql:host=" . getenv("DB_HOST") . ";port=" . (getenv("DB_PORT") ?: 5432) . ";dbname=";
+            $db = new PDO($dsn . "postgres", getenv("DB_USER"), getenv("DB_PASS"), $options);
+            $query = $db->prepare("SELECT count(*) FROM pg_database WHERE datname = ?");
+            $query->execute(array(getenv("DB_NAME")));
+            if (!$query->fetchColumn()) exit(2);
+            $db = new PDO($dsn . getenv("DB_NAME"), getenv("DB_USER"), getenv("DB_PASS"), $options);
+            $query = $db->prepare("SELECT count(to_regclass(?))");
+            $query->execute(array($table));
+            break;
+          default:
+            exit(1);
+        }
+        exit($query->fetchColumn() ? 0 : 2);
+      } catch (Exception $e) {
+        echo $e->getMessage();
+        exit(1);
+      }' 2>&1)
+  case $? in
+    0)
+      log "ERROR: ${PHPBB_ROOT}/phpbb/config.php is missing, but the database already holds a phpBB board"
+      log "       (its $table table exists), so the image won't install a new one over it."
+      log "       Restore config.php to ${PHPBB_ROOT}/phpbb/config.php, or check that the board's volume is"
+      log "       mounted at ${PHPBB_ROOT}."
+      return 1 ;;
+    2)
+      return 0 ;;
+    *)
+      log "ERROR: SQL error during migration check, install skipped: $error"
+      return 1 ;;
+  esac
 }
 
 # Load config values - keep variables on separate lines for readability
@@ -252,6 +309,7 @@ fi
 # Validate database config and test connection before installation
 validate_db_config || exit 1
 test_db_connection || exit 1
+refuse_existing_board || exit 1
 
 # Convert a value the way phpBB's request layer converts form input, using phpBB's
 # own type_cast_helper (newlines normalized, HTML-escaped, NFC-normalized, trimmed

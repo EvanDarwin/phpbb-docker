@@ -39,6 +39,12 @@ check_has "the dump is of the database before the upgrade" "'$LEGACY_PHPBB_VERSI
 docker exec "$(c db)" mariadb -uroot -p"$root_password" -e "CREATE DATABASE restored; GRANT ALL ON restored.* TO 'phpbb'@'%';"
 restore_check "the dump restores into an empty database" up1 docker exec -i "$(c db)" mariadb -uphpbb -pdbpass restored
 check_eq "the restored board is from before the upgrade" "$LEGACY_PHPBB_VERSION" "$(db_version restored)"
+# shellcheck disable=SC2046
+launch lost1 "$IMAGE" -v "$(vol lost1):/opt/phpbb" $(board_env phpbb) -e PHPBB_PASSWORD="$T_PASSWORD"
+wait_up lost1
+check_eq "a new volume isn't installed over that board's database" 1 "$(exit_code lost1)"
+check_has "and the log says why" "config.php is missing, but the database already holds a phpBB board" "$(logs lost1)"
+check_eq "and the board is untouched" "$version" "$(db_version phpbb)"
 
 echo "MariaDB board from this image at phpBB $old_version, whose database dump fails"
 # shellcheck disable=SC2046

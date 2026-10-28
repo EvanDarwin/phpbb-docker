@@ -165,8 +165,8 @@ RUN set -e; \
     for p in /tmp/phpbb-patches/*.patch; do patch -p1 --forward --fuzz=0 -d "${PHPBB_CODE}" < "$p"; done; \
     apk del .patch; \
     rm -rf /tmp/phpbb-patches; \
-    for item in store files images ext styles language config.php; do mv "${PHPBB_CODE}/$item" "${PHPBB_DIST}/$item"; done; \
-    rm -rf "${PHPBB_CODE}/cache"; \
+    for item in store files images ext styles language; do mv "${PHPBB_CODE}/$item" "${PHPBB_DIST}/$item"; done; \
+    rm -rf "${PHPBB_CODE}/cache" "${PHPBB_CODE}/config.php"; \
     LEGACY_BASE_VERSION=3.3.15; \
     mkdir -p "${PHPBB_LEGACY_BASE}"; \
     if [ "${PHPBB_VERSION}" = "${LEGACY_BASE_VERSION}" ]; then \

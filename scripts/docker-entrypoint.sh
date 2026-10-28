@@ -79,7 +79,7 @@ prepare_data_dir() {
     log "WARNING: $PHPBB_ROOT isn't writable by the container's user ($(id -u):$(id -g)); please run: docker exec -u root $(hostname) chown -R $(id -u):$(id -g) $PHPBB_ROOT"
   fi
   mkdir -p "$DATA_DIR" || { log "ERROR: Could not create $DATA_DIR"; return 1; }
-  for item in store files images ext styles language config.php; do
+  for item in store files images ext styles language; do
     if [ ! -e "$DATA_DIR/$item" ]; then
       log "Creating $DATA_DIR/$item"
       if ! cp -R "$PHPBB_DIST/$item" "$DATA_DIR/$item"; then
