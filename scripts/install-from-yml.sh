@@ -221,7 +221,7 @@ refuse_existing_board() {
             $query->execute(array(getenv("DB_NAME")));
             if (!$query->fetchColumn()) exit(2);
             $db = new PDO($dsn . getenv("DB_NAME"), getenv("DB_USER"), getenv("DB_PASS"), $options);
-            $query = $db->prepare("SELECT count(*) FROM information_schema.tables WHERE table_schema = current_schema() AND table_name = ?");
+            $query = $db->prepare("SELECT count(to_regclass(?))");
             $query->execute(array($table));
             break;
           default:
